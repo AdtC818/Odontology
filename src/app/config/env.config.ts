@@ -4,6 +4,7 @@ dotenv.config();
 export const envConfig = {
   port: Number(process.env.PORT) || 4000,
   nodeEnv: process.env.NODE_ENV || 'development',
+  jwtSecret: process.env.JWT_SECRET || 'odontsecret2026',
   db: {
     connectionString: process.env.DATABASE_URL,
     host: process.env.DB_HOST,
