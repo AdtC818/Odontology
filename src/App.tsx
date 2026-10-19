@@ -30,11 +30,7 @@ export const App: React.FC = () => {
     null
   );
 
-  const {
-    drafts,
-    saveDraftForUser,
-    discardDraft,
-  } = useSessionDraft(null);
+  const { drafts, saveDraftForUser, discardDraft } = useSessionDraft(null);
 
   const auth = useAuth({
     apiBaseUrl: '/api/v1',
@@ -45,7 +41,6 @@ export const App: React.FC = () => {
 
   const userDraftHook = useSessionDraft(auth.session?.usuario.idUsuario);
 
-  // Sincronizar ruta si el usuario ya tiene sesión activa o si hay un token en la URL
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -59,7 +54,6 @@ export const App: React.FC = () => {
     }
   }, [auth.isAuthenticated]);
 
-  // Cargar catálogo de roles desde PostgreSQL (/api/v1/roles) al entrar al panel
   useEffect(() => {
     if (!auth.isAuthenticated) return;
     auth
@@ -70,11 +64,10 @@ export const App: React.FC = () => {
         }
       })
       .catch(() => {
-        // Conserva semilla inicial de respaldo si aún no hay roles en BD
+        // Conserva los roles semilla si aún no existen registros adicionales
       });
   }, [auth.isAuthenticated, auth.fetchRoles]);
 
-  // RF-USR-006: Vista pública demostrativa de Solicitud de Citas sin sesión
   if (currentRoute === 'PUBLIC_BOOKING') {
     return (
       <div className="min-h-screen flex flex-col justify-between bg-[#F8F9FA] text-[#1E242B]">
@@ -90,7 +83,7 @@ export const App: React.FC = () => {
           <button
             type="button"
             onClick={() => setCurrentRoute('LOGIN')}
-            className="min-h-[44px] rounded-xl bg-[#D4AF37] px-5 py-2 text-sm font-bold text-white hover:bg-[#B8942A]"
+            className="min-h-[44px] rounded-xl bg-[#D4AF37] px-5 py-2 text-sm font-bold text-[#111111] hover:bg-[#B8942A]"
           >
             Acceso Personal del Consultorio →
           </button>
@@ -102,7 +95,7 @@ export const App: React.FC = () => {
               Solicitud Pública de Citas (ROL-PAC)
             </h1>
             <p className="mt-2 text-sm text-[#687380]">
-              Esta página carga sin pedir credenciales y permite elegir el servicio (Odontología general u Ortodoncia) sin exponer datos de otros pacientes (RF-USR-006 / RQNF-SEG-008).
+              Esta página carga sin pedir credenciales y permite elegir el servicio sin exponer datos de otros pacientes (RF-USR-006 / RQNF-SEG-008).
             </p>
             <button
               type="button"
@@ -121,7 +114,6 @@ export const App: React.FC = () => {
     );
   }
 
-  // RF-USR-009: Vista de Recuperación de Contraseña
   if (currentRoute === 'RECOVERY') {
     return (
       <PasswordRecoveryPage
@@ -133,7 +125,6 @@ export const App: React.FC = () => {
     );
   }
 
-  // RF-USR-005 y RF-USR-006: Redirección automática al Login si no hay sesión activa
   if (!auth.session || currentRoute === 'LOGIN') {
     return (
       <LoginPage
@@ -150,7 +141,6 @@ export const App: React.FC = () => {
     );
   }
 
-  // RQNF-SEG-003: Verificación de permiso RBAC para administración de usuarios/roles
   const canAccessUsersModule =
     auth.hasPermission('RF-USR-004') || auth.hasPermission('RF-USR-001');
   const canAccessRolesModule =
@@ -214,13 +204,27 @@ export const App: React.FC = () => {
           onUpdateUser={auth.updateUser}
           onToggleUserStatus={auth.toggleUserStatus}
         />
-      ) : (
+      ) : internalView === 'ROLES' ? (
         <RolesManagementPage
           initialRoles={catalogRoles}
           onCreateRole={auth.createRole}
           onUpdateRole={auth.updateRole}
           onDeleteRole={auth.deleteRole}
         />
+      ) : (
+        <div className="p-8">
+          <div className="mx-auto max-w-2xl rounded-2xl border border-[#E2E6EA] bg-white p-8 text-center space-y-2 shadow-2xs">
+            <span className="inline-flex items-center rounded-full bg-[#FBF6E6] px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-[#B8942A]">
+              MÓDULO EN CONSTRUCCIÓN
+            </span>
+            <h2 className="text-xl font-extrabold text-[#1E242B]">
+              Vista seleccionada: {internalView}
+            </h2>
+            <p className="text-sm text-[#687380]">
+              El Módulo A (Doctores y Roles/Permisos) se encuentra operativo. Seleccione &ldquo;Doctores&rdquo; o &ldquo;Roles y permisos&rdquo; en el menú lateral para continuar.
+            </p>
+          </div>
+        </div>
       )}
     </InternalDashboardLayout>
   );

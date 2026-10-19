@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+// src/modules/users-auth/ui/views/UsersManagementPage.tsx
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActiveAppointmentSummaryDTO,
   RoleDTO,
@@ -35,6 +36,9 @@ export interface UsersManagementPageProps {
   }>;
 }
 
+// Constantes estáticas fuera del componente para evitar nuevas referencias en cada render
+const EMPTY_USERS: UserWithRolesDomainDTO[] = [];
+
 const DEFAULT_ROLES_FALLBACK: RoleDTO[] = [
   { id_rol: 1, codigo: 'ROL-ADM', nombre_rol: 'Administrador del Sistema' },
   { id_rol: 2, codigo: 'ROL-ODO', nombre_rol: 'Odontólogo General' },
@@ -44,7 +48,7 @@ const DEFAULT_ROLES_FALLBACK: RoleDTO[] = [
 ];
 
 export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
-  initialUsers = [],
+  initialUsers = EMPTY_USERS,
   initialRoles = DEFAULT_ROLES_FALLBACK,
   savedUserDraft,
   onDiscardUserDraft,
@@ -53,20 +57,21 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
   onUpdateUser,
   onToggleUserStatus,
 }) => {
-  const [users, setUsers] = useState<UserWithRolesDomainDTO[]>(initialUsers);
+  const [allLoadedUsers, setAllLoadedUsers] = useState<UserWithRolesDomainDTO[]>(initialUsers);
   const [roles, setRoles] = useState<RoleDTO[]>(initialRoles);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isInitialLoading, setIsInitialLoading] = useState<boolean>(
+    initialUsers.length === 0
+  );
+  const [togglingUserId, setTogglingUserId] = useState<number | null>(null);
 
-  // Estados de filtros combinados (RF-USR-004)
-  const [documentoFilter, setDocumentoFilter] = useState('');
-  const [nombreFilter, setNombreFilter] = useState('');
+  // Filtros del diseño (buscador unificado, pestañas Todos/Activos/Inactivos y selector de rol)
+  const [searchQuery, setSearchQuery] = useState('');
   const [rolIdFilter, setRolIdFilter] = useState<string>('ALL');
   const [estadoFilter, setEstadoFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
 
-  // Mensajes de feedback
+  // Mensajes de estado
   const [bannerSuccess, setBannerSuccess] = useState<string | null>(null);
   const [bannerError, setBannerError] = useState<string | null>(null);
-  const [emptySearchMessage, setEmptySearchMessage] = useState<string | null>(null);
 
   // Estados del modal de Crear / Editar (RF-USR-001 / RF-USR-002)
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -78,6 +83,57 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
     ActiveAppointmentSummaryDTO[]
   >([]);
 
+  // Ref estable para evitar que cambios de identidad de función disparen useEffect en bucle
+  const onSearchUsersRef = useRef(onSearchUsers);
+  useEffect(() => {
+    onSearchUsersRef.current = onSearchUsers;
+  }, [onSearchUsers]);
+
+  const fetchUsersDirectory = useCallback(async (showSkeleton: boolean = false) => {
+    if (showSkeleton) {
+      setIsInitialLoading(true);
+    }
+    setBannerError(null);
+
+    try {
+      if (onSearchUsersRef.current) {
+        const result = await onSearchUsersRef.current({});
+        setAllLoadedUsers(Array.isArray(result.data) ? result.data : []);
+      } else {
+        const res = await fetch('/api/v1/users');
+        if (res.status === 404) {
+          setAllLoadedUsers([]);
+          return;
+        }
+        const body = await res.json();
+        if (!res.ok) {
+          throw new Error(body.message || 'Error al consultar el directorio de usuarios.');
+        }
+        setAllLoadedUsers(Array.isArray(body.data) ? body.data : []);
+      }
+    } catch (error: any) {
+      setBannerError(error?.message || 'Error al consultar la lista de usuarios.');
+    } finally {
+      setIsInitialLoading(false);
+    }
+  }, []);
+
+  // Carga única al montar el componente (sin bucles de re-renderizado)
+  useEffect(() => {
+    if (initialUsers.length > 0) {
+      setAllLoadedUsers(initialUsers);
+      setIsInitialLoading(false);
+      return;
+    }
+    fetchUsersDirectory(true);
+  }, [fetchUsersDirectory, initialUsers]);
+
+  useEffect(() => {
+    if (initialRoles && initialRoles.length > 0) {
+      setRoles(initialRoles);
+    }
+  }, [initialRoles]);
+
   const normalizeText = (text: string): string =>
     text
       .normalize('NFD')
@@ -85,113 +141,61 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
       .toLowerCase()
       .trim();
 
-  const executeSearch = useCallback(async () => {
-    setIsLoading(true);
-    setBannerError(null);
-    setEmptySearchMessage(null);
-
+  // Filtrado reactivo instantáneo según RF-USR-004 y barra de herramientas del diseño
+  const filteredUsers = useMemo(() => {
+    const cleanQuery = searchQuery.trim();
+    const normalizedQuery = normalizeText(cleanQuery);
+    const isNumericDocumentQuery = /^\d+$/.test(cleanQuery);
+    const idRolNumber = rolIdFilter === 'ALL' ? undefined : Number(rolIdFilter);
     const estadoBoolean =
       estadoFilter === 'ALL' ? undefined : estadoFilter === 'ACTIVE';
-    const idRolNumber = rolIdFilter === 'ALL' ? undefined : Number(rolIdFilter);
 
-    try {
-      if (onSearchUsers) {
-        const result = await onSearchUsers({
-          documento: documentoFilter.trim() || undefined,
-          nombre: nombreFilter.trim() || undefined,
-          idRol: idRolNumber,
-          estado: estadoBoolean,
-        });
-        setUsers(result.data);
-        if (result.data.length === 0) {
-          setEmptySearchMessage(result.message || 'ninguna coincidencia encontrada');
+    return allLoadedUsers
+      .filter((user) => {
+        if (cleanQuery) {
+          if (isNumericDocumentQuery) {
+            // Coincidencia exacta por documento o coincidencia en teléfono (RF-USR-004)
+            const matchesDoc =
+              user.documentoIdentidad === cleanQuery ||
+              user.documentoIdentidad.includes(cleanQuery);
+            if (!matchesDoc) return false;
+          } else {
+            const matchesName = normalizeText(user.nombreCompleto).includes(
+              normalizedQuery
+            );
+            const matchesEmail = normalizeText(user.correo).includes(
+              normalizedQuery
+            );
+            const matchesRoleName = user.roles.some(
+              (r) =>
+                r.estadoAsignacion &&
+                normalizeText(r.nombreRol).includes(normalizedQuery)
+            );
+            if (!matchesName && !matchesEmail && !matchesRoleName) {
+              return false;
+            }
+          }
         }
-      } else if (initialUsers.length > 0) {
-        // Filtrado local con las reglas exactas de RF-USR-004
-        const filtered = initialUsers
-          .filter((u) => {
-            if (
-              documentoFilter.trim() &&
-              u.documentoIdentidad !== documentoFilter.trim()
-            ) {
-              return false;
-            }
-            if (
-              nombreFilter.trim() &&
-              !normalizeText(u.nombreCompleto).includes(normalizeText(nombreFilter))
-            ) {
-              return false;
-            }
-            if (
-              idRolNumber !== undefined &&
-              !u.roles.some(
-                (r) => r.estadoAsignacion && Number(r.idRol) === idRolNumber
-              )
-            ) {
-              return false;
-            }
-            if (estadoBoolean !== undefined && u.estado !== estadoBoolean) {
-              return false;
-            }
-            return true;
-          })
-          .sort((a, b) =>
-            a.nombreCompleto.localeCompare(b.nombreCompleto, 'es-CO', {
-              sensitivity: 'base',
-            })
+
+        if (idRolNumber !== undefined) {
+          const hasRole = user.roles.some(
+            (r) => r.estadoAsignacion && Number(r.idRol) === idRolNumber
           );
-
-        setUsers(filtered);
-        if (filtered.length === 0) {
-          setEmptySearchMessage('ninguna coincidencia encontrada');
+          if (!hasRole) return false;
         }
-      } else {
-        const params = new URLSearchParams();
-        if (documentoFilter.trim()) params.set('documento', documentoFilter.trim());
-        if (nombreFilter.trim()) params.set('nombre', nombreFilter.trim());
-        if (estadoBoolean !== undefined) params.set('estado', String(estadoBoolean));
 
-        const res = await fetch(`/api/users-auth/users?${params.toString()}`);
-        const body = await res.json();
-        const list: UserWithRolesDomainDTO[] = Array.isArray(body.data)
-          ? body.data
-          : [];
-
-        const filteredByRole =
-          idRolNumber !== undefined
-            ? list.filter((u) =>
-                u.roles.some(
-                  (r) => r.estadoAsignacion && Number(r.idRol) === idRolNumber
-                )
-              )
-            : list;
-
-        setUsers(filteredByRole);
-        if (filteredByRole.length === 0) {
-          setEmptySearchMessage('ninguna coincidencia encontrada');
+        if (estadoBoolean !== undefined && user.estado !== estadoBoolean) {
+          return false;
         }
-      }
-    } catch (error: any) {
-      setBannerError(error?.message || 'Error al consultar la lista de usuarios.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [documentoFilter, nombreFilter, rolIdFilter, estadoFilter, onSearchUsers, initialUsers]);
 
-  useEffect(() => {
-    executeSearch();
-  }, [executeSearch]);
-
-  useEffect(() => {
-    if (initialRoles.length > 0) {
-      setRoles(initialRoles);
-    }
-  }, [initialRoles]);
-
-  const activeUsersCount = useMemo(
-    () => users.filter((u) => u.estado).length,
-    [users]
-  );
+        return true;
+      })
+      .sort((a, b) =>
+        a.nombreCompleto.localeCompare(b.nombreCompleto, 'es-CO', {
+          sensitivity: 'base',
+        })
+      );
+  }, [allLoadedUsers, searchQuery, rolIdFilter, estadoFilter]);
 
   const handleOpenCreateModal = () => {
     setModalMode('CREATE');
@@ -221,7 +225,7 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
           const result = await onCreateUser(payload);
           setBannerSuccess(result.message);
         } else {
-          const res = await fetch('/api/users-auth/users', {
+          const res = await fetch('/api/v1/users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -238,7 +242,7 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
           const result = await onUpdateUser(payload);
           setBannerSuccess(result.message);
         } else {
-          const res = await fetch(`/api/users-auth/users/${payload.idUsuario}`, {
+          const res = await fetch(`/api/v1/users/${payload.idUsuario}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
@@ -250,12 +254,14 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
             }
             throw new Error(body.message);
           }
-          setBannerSuccess(body.message || 'Datos del usuario actualizados exitosamente.');
+          setBannerSuccess(
+            body.message || 'Datos del usuario actualizados exitosamente.'
+          );
         }
       }
 
       setIsModalOpen(false);
-      await executeSearch();
+      await fetchUsersDirectory(false);
     } catch (error: any) {
       setModalServerError(
         error?.message || 'No fue posible guardar los datos del usuario.'
@@ -268,6 +274,7 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
   const handleToggleStatus = async (user: UserWithRolesDomainDTO) => {
     setBannerError(null);
     setBannerSuccess(null);
+    setTogglingUserId(user.idUsuario);
     const nuevoEstado = !user.estado;
 
     try {
@@ -275,7 +282,7 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
         const result = await onToggleUserStatus(user.idUsuario, nuevoEstado);
         setBannerSuccess(result.message);
       } else {
-        const res = await fetch(`/api/users-auth/users/${user.idUsuario}/status`, {
+        const res = await fetch(`/api/v1/users/${user.idUsuario}/status`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ estado: nuevoEstado }),
@@ -287,59 +294,124 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
             `Usuario ${nuevoEstado ? 'activado' : 'inactivado'} exitosamente.`
         );
       }
-      await executeSearch();
+      await fetchUsersDirectory(false);
     } catch (error: any) {
       setBannerError(
         error?.message ||
           'No se pudo cambiar el estado del usuario (verifique si es el último administrador o tiene citas activas).'
       );
+    } finally {
+      setTogglingUserId(null);
     }
   };
 
-  const handleClearFilters = () => {
-    setDocumentoFilter('');
-    setNombreFilter('');
-    setRolIdFilter('ALL');
-    setEstadoFilter('ALL');
+  // Helpers visuales fieles al diseño image_8285bb.png
+  const getInitials = (fullName: string): string => {
+    const parts = fullName
+      .replace(/^(Dr\.|Dra\.)\s*/i, '')
+      .trim()
+      .split(/\s+/);
+    if (parts.length === 0) return 'US';
+    if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  };
+
+  const formatColombianPhone = (phone: string | null): string => {
+    if (!phone) return 'Sin teléfono';
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length === 10) {
+      return `+57 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}–${digits.slice(6)}`;
+    }
+    return phone;
+  };
+
+  const getRoleBadgeStyle = (roleName: string, isUserActive: boolean) => {
+    if (!isUserActive) {
+      return 'bg-[#F3F5F7] text-[#94A3B8]';
+    }
+    const lower = roleName.toLowerCase();
+    if (lower.includes('especialista') || lower.includes('ortodon')) {
+      return 'bg-[#FBF6E6] text-[#B8942A]';
+    }
+    if (lower.includes('odont')) {
+      return 'bg-[#DBEAFE] text-[#1D4ED8]';
+    }
+    if (lower.includes('administrador')) {
+      return 'bg-[#FBF6E6] text-[#B8942A]';
+    }
+    if (lower.includes('coordinador')) {
+      return 'bg-[#FCE7F3] text-[#BE185D]';
+    }
+    if (lower.includes('auxiliar')) {
+      return 'bg-[#CCFBF1] text-[#0F766E]';
+    }
+    return 'bg-[#F3F5F7] text-[#1E242B]';
+  };
+
+  const getAvatarCircleStyle = (user: UserWithRolesDomainDTO) => {
+    if (!user.estado) {
+      return 'bg-[#F3F5F7] text-[#94A3B8] border-[#E2E6EA]';
+    }
+    const firstRole = user.roles[0]?.nombreRol.toLowerCase() ?? '';
+    if (firstRole.includes('administrador') || firstRole.includes('odont')) {
+      return 'bg-[#FBF6E6] text-[#B8942A] border-[#D4AF37]/30';
+    }
+    if (firstRole.includes('coordinador')) {
+      return 'bg-[#FCE7F3] text-[#BE185D] border-[#FBCFE8]';
+    }
+    if (firstRole.includes('auxiliar')) {
+      return 'bg-[#CCFBF1] text-[#0F766E] border-[#99F6E4]';
+    }
+    return 'bg-[#F3F5F7] text-[#1E242B] border-[#E2E6EA]';
+  };
+
+  const formatShortRoleLabel = (roleName: string): string => {
+    const lower = roleName.toLowerCase();
+    if (lower.includes('especialista')) return 'Especialista';
+    if (lower.includes('odontólogo') || lower.includes('odontologo')) return 'Odontólogo';
+    if (lower.includes('administrador')) return 'Administrador';
+    if (lower.includes('coordinador')) return 'Coordinador de agenda';
+    if (lower.includes('auxiliar')) return 'Auxiliar';
+    return roleName;
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#F8F9FA] text-[#1E242B] p-4 sm:p-6 lg:p-8 overflow-x-hidden">
-      <div className="mx-auto max-w-7xl space-y-6">
-        {/* Cabecera del Módulo */}
-        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-[#E2E6EA] bg-white p-5 sm:p-6 shadow-xs">
+    <div className="min-h-full w-full bg-[#F8F9FA] text-[#1E242B] px-4 py-6 sm:px-8 sm:py-7 overflow-x-hidden">
+      <div className="mx-auto max-w-6xl space-y-6">
+        {/* Cabecera estilo "Doctores y Equipo" según diseño adjunto */}
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between border-b border-[#E2E6EA] pb-6">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="rounded-lg bg-[#111111] px-2.5 py-1 text-[13px] font-mono font-bold text-[#D4AF37]">
-                MÓDULO A
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FBF6E6] border border-[#D4AF37]/30 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-[#B8942A]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[#D4AF37]" aria-hidden="true" />
+                DIRECTORIO CLÍNICO
               </span>
-              <span className="text-[13px] font-semibold text-[#687380]">
-                RF-USR-001 a RF-USR-004
+              <span className="text-[13px] font-medium text-[#687380]">
+                • OdontoLeal Sede Principal
               </span>
             </div>
-            <h1 className="mt-2 text-2xl sm:text-3xl font-extrabold text-[#1E242B]">
-              Administración de Usuarios
+
+            <h1 className="mt-2.5 text-3xl sm:text-[34px] font-extrabold tracking-tight text-[#1E242B] leading-tight">
+              Doctores y Equipo
             </h1>
-            <p className="mt-1 text-[13px] sm:text-sm text-[#687380]">
-              Gestione las cuentas del personal del consultorio, sus roles asignados y firmas digitalizadas. Los usuarios no se eliminan; se activan o inactivan conservando su autoría (RF-USR-003).
+            <p className="mt-1 text-[14px] text-[#687380]">
+              Gestión del cuerpo facultativo, odontólogos, especialistas y personal asistencial acreditado.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={handleOpenCreateModal}
-              className="min-h-[46px] inline-flex items-center justify-center gap-2 rounded-xl bg-[#D4AF37] px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-[#B8942A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#111111] transition-colors"
-            >
-              <span className="text-lg leading-none" aria-hidden="true">
-                +
-              </span>
-              <span>Registrar Nuevo Usuario</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleOpenCreateModal}
+            className="min-h-[44px] self-start sm:self-end inline-flex items-center justify-center gap-2 rounded-xl bg-[#D4AF37] px-5 py-2.5 text-[14px] font-bold text-[#111111] shadow-xs hover:bg-[#B8942A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#111111] transition-colors"
+          >
+            <span className="text-lg leading-none font-normal" aria-hidden="true">
+              +
+            </span>
+            <span>Nuevo Usuario</span>
+          </button>
         </header>
 
-        {/* Aviso de borrador pendiente por cierre automático en minuto 30 (RF-USR-008) */}
+        {/* Aviso de borrador pendiente si aplica (RF-USR-008) */}
         {savedUserDraft && (
           <div
             role="region"
@@ -351,14 +423,14 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
                 💾 Tiene un borrador sin guardar del formulario de usuarios (RF-USR-008)
               </p>
               <p className="mt-0.5">
-                Conservado tras el cierre automático de su sesión anterior. Puede abrir el formulario para revisarlo o descartarlo.
+                Conservado tras el cierre automático de su sesión anterior.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
                 onClick={handleOpenCreateModal}
-                className="min-h-[44px] rounded-xl bg-[#1D4ED8] px-4 py-2 text-[13px] font-bold text-white hover:opacity-95"
+                className="min-h-[40px] rounded-xl bg-[#1D4ED8] px-4 py-2 text-[13px] font-bold text-white"
               >
                 Revisar borrador
               </button>
@@ -366,7 +438,7 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
                 <button
                   type="button"
                   onClick={onDiscardUserDraft}
-                  className="min-h-[44px] rounded-xl border border-[#1D4ED8]/40 bg-white px-3.5 py-2 text-[13px] font-semibold text-[#1D4ED8]"
+                  className="min-h-[40px] rounded-xl border border-[#1D4ED8]/40 bg-white px-3.5 py-2 text-[13px] font-semibold text-[#1D4ED8]"
                 >
                   Descartar
                 </button>
@@ -375,18 +447,18 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
           </div>
         )}
 
-        {/* Alertas Semánticas Globales (RQNF-USA-001: Color + Ícono + Texto) */}
+        {/* Mensajes de retroalimentación semánticos */}
         {bannerSuccess && (
           <div
             role="status"
-            className="flex items-center justify-between gap-3 rounded-2xl border border-[#15803D]/30 bg-[#DCFCE7] px-5 py-4 text-sm font-semibold text-[#15803D]"
+            className="flex items-center justify-between gap-3 rounded-2xl border border-[#15803D]/30 bg-[#DCFCE7] px-5 py-3.5 text-sm font-semibold text-[#15803D]"
           >
-            <span>✓ Confirmación: {bannerSuccess}</span>
+            <span>✓ {bannerSuccess}</span>
             <button
               type="button"
               onClick={() => setBannerSuccess(null)}
-              aria-label="Cerrar mensaje de confirmación"
-              className="min-h-[36px] px-2 font-bold"
+              aria-label="Cerrar mensaje de éxito"
+              className="min-h-[32px] px-2 font-bold"
             >
               ✕
             </button>
@@ -396,321 +468,295 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
         {bannerError && (
           <div
             role="alert"
-            className="flex items-start justify-between gap-3 rounded-2xl border border-[#B91C1C]/30 bg-[#FEE2E2] px-5 py-4 text-sm font-semibold text-[#B91C1C]"
+            className="flex items-start justify-between gap-3 rounded-2xl border border-[#B91C1C]/30 bg-[#FEE2E2] px-5 py-3.5 text-sm font-semibold text-[#B91C1C]"
           >
-            <span>✕ Restricción de negocio: {bannerError}</span>
+            <span>✕ {bannerError}</span>
             <button
               type="button"
               onClick={() => setBannerError(null)}
               aria-label="Cerrar mensaje de error"
-              className="min-h-[36px] px-2 font-bold"
+              className="min-h-[32px] px-2 font-bold"
             >
               ✕
             </button>
           </div>
         )}
 
-        {/* Barra de Búsqueda y Filtros Combinados (RF-USR-004) */}
+        {/* Barra de Filtros horizontal idéntica al diseño adjunto */}
         <section
-          aria-label="Filtros de búsqueda de usuarios"
-          className="rounded-2xl border border-[#E2E6EA] bg-white p-5 shadow-xs space-y-4"
+          aria-label="Filtros del directorio clínico"
+          className="rounded-2xl border border-[#E2E6EA] bg-white p-3 shadow-2xs flex flex-col lg:flex-row items-stretch lg:items-center gap-3"
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Filtro por Documento Exacto */}
-            <div>
-              <label
-                htmlFor="filter-user-doc"
-                className="block text-[13px] font-bold uppercase tracking-wider text-[#1E242B] mb-1.5"
-              >
-                Documento (Exacto)
-              </label>
-              <input
-                id="filter-user-doc"
-                type="text"
-                inputMode="numeric"
-                value={documentoFilter}
-                onChange={(e) => setDocumentoFilter(e.target.value.replace(/\D/g, ''))}
-                placeholder="Ej. 1098765432"
-                className="w-full min-h-[44px] rounded-xl border border-[#E2E6EA] bg-[#F3F5F7] px-3.5 py-2 text-sm text-[#1E242B] placeholder-[#687380] focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
-              />
-            </div>
-
-            {/* Filtro por Nombre (Insensible a mayúsculas y tildes) */}
-            <div>
-              <label
-                htmlFor="filter-user-name"
-                className="block text-[13px] font-bold uppercase tracking-wider text-[#1E242B] mb-1.5"
-              >
-                Nombre (Completo o parcial)
-              </label>
-              <input
-                id="filter-user-name"
-                type="search"
-                value={nombreFilter}
-                onChange={(e) => setNombreFilter(e.target.value)}
-                placeholder="Ej. diaz / Natalia Díaz"
-                className="w-full min-h-[44px] rounded-xl border border-[#E2E6EA] bg-[#F3F5F7] px-3.5 py-2 text-sm text-[#1E242B] placeholder-[#687380] focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
-              />
-            </div>
-
-            {/* Filtro por Rol */}
-            <div>
-              <label
-                htmlFor="filter-user-role"
-                className="block text-[13px] font-bold uppercase tracking-wider text-[#1E242B] mb-1.5"
-              >
-                Rol Asignado
-              </label>
-              <select
-                id="filter-user-role"
-                value={rolIdFilter}
-                onChange={(e) => setRolIdFilter(e.target.value)}
-                className="w-full min-h-[44px] rounded-xl border border-[#E2E6EA] bg-[#F3F5F7] px-3.5 py-2 text-sm text-[#1E242B] focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
-              >
-                <option value="ALL">Todos los roles</option>
-                {roles
-                  .filter((r) => r.codigo !== 'ROL-PAC')
-                  .map((r) => (
-                    <option key={r.id_rol} value={String(r.id_rol)}>
-                      {r.nombre_rol} {r.codigo ? `(${r.codigo})` : ''}
-                    </option>
-                  ))}
-              </select>
-            </div>
-
-            {/* Filtro por Estado */}
-            <div>
-              <label
-                htmlFor="filter-user-status"
-                className="block text-[13px] font-bold uppercase tracking-wider text-[#1E242B] mb-1.5"
-              >
-                Estado del Usuario
-              </label>
-              <select
-                id="filter-user-status"
-                value={estadoFilter}
-                onChange={(e) =>
-                  setEstadoFilter(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')
-                }
-                className="w-full min-h-[44px] rounded-xl border border-[#E2E6EA] bg-[#F3F5F7] px-3.5 py-2 text-sm text-[#1E242B] focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
-              >
-                <option value="ALL">Todos (Activos e Inactivos)</option>
-                <option value="ACTIVE">Estado: Activo</option>
-                <option value="INACTIVE">Estado: Inactivo</option>
-              </select>
-            </div>
+          {/* Buscador por nombre, documento, especialidad o correo */}
+          <div className="relative flex-1">
+            <span
+              className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[#94A3B8]"
+              aria-hidden="true"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35m1.85-5.15a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+            </span>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar por nombre, especialidad, documento o correo..."
+              aria-label="Buscar por nombre, especialidad, documento o correo"
+              className="w-full min-h-[42px] rounded-xl border border-[#E2E6EA] bg-[#F8F9FA] pl-10 pr-4 py-2 text-[13px] sm:text-sm text-[#1E242B] placeholder-[#94A3B8] focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20 transition-colors"
+            />
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#E2E6EA] pt-3">
-            <div className="flex flex-wrap items-center gap-2 text-[13px] text-[#687380]">
-              <span className="font-semibold text-[#1E242B]">
-                Total mostrados: {users.length}
-              </span>
-              <span>•</span>
-              <span className="inline-flex items-center gap-1 rounded-md bg-[#DCFCE7] px-2 py-0.5 font-semibold text-[#15803D]">
-                ✓ Activos: {activeUsersCount}
-              </span>
-            </div>
+          {/* Selector segmentado: Todos / Activos / Inactivos */}
+          <div
+            role="group"
+            aria-label="Filtrar por estado del usuario"
+            className="inline-flex items-center rounded-xl border border-[#E2E6EA] bg-[#F8F9FA] p-1 self-start lg:self-auto"
+          >
+            {(
+              [
+                { id: 'ALL', label: 'Todos' },
+                { id: 'ACTIVE', label: 'Activos' },
+                { id: 'INACTIVE', label: 'Inactivos' },
+              ] as const
+            ).map((tab) => {
+              const isSelected = estadoFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setEstadoFilter(tab.id)}
+                  className={`min-h-[34px] rounded-lg px-4 py-1.5 text-[13px] transition-all ${
+                    isSelected
+                      ? 'bg-[#111827] font-bold text-white shadow-2xs'
+                      : 'font-medium text-[#687380] hover:text-[#1E242B]'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
 
-            <button
-              type="button"
-              onClick={handleClearFilters}
-              className="min-h-[40px] rounded-xl border border-[#E2E6EA] bg-[#F8F9FA] px-4 py-1.5 text-[13px] font-semibold text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6] transition-colors"
+          {/* Selector desplegable: Todos los roles */}
+          <div className="w-full lg:w-52">
+            <select
+              value={rolIdFilter}
+              onChange={(e) => setRolIdFilter(e.target.value)}
+              aria-label="Filtrar por rol"
+              className="w-full min-h-[42px] rounded-xl border border-[#E2E6EA] bg-white px-3.5 py-2 text-[13px] sm:text-sm font-medium text-[#1E242B] focus:border-[#D4AF37] focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
             >
-              Limpiar filtros
-            </button>
+              <option value="ALL">Todos los roles</option>
+              {roles
+                .filter((r) => r.codigo !== 'ROL-PAC')
+                .map((r) => (
+                  <option key={r.id_rol} value={String(r.id_rol)}>
+                    {r.nombre_rol}
+                  </option>
+                ))}
+            </select>
           </div>
         </section>
 
-        {/* Resultados de Usuarios (RF-USR-004) */}
-        <section aria-label="Listado de usuarios registrados">
-          {isLoading ? (
+        {/* Listado de Tarjetas Horizontales según diseño image_8285bb.png */}
+        <section aria-label="Listado del equipo clínico" className="space-y-3">
+          {isInitialLoading ? (
             <div className="rounded-2xl border border-[#E2E6EA] bg-white p-10 text-center text-sm font-semibold text-[#687380]">
               Cargando directorio de usuarios...
             </div>
-          ) : users.length === 0 ? (
+          ) : filteredUsers.length === 0 ? (
             <div
               role="status"
               className="rounded-2xl border border-[#E2E6EA] bg-white p-10 text-center space-y-2"
             >
               <p className="text-base font-bold text-[#1E242B]">
-                {emptySearchMessage || 'ninguna coincidencia encontrada'}
+                ninguna coincidencia encontrada
               </p>
               <p className="text-[13px] text-[#687380]">
-                Verifique el documento de identidad, el nombre o los filtros de rol y estado seleccionados (RF-USR-004).
+                No se encontraron usuarios que coincidan con los criterios seleccionados (RF-USR-004).
               </p>
             </div>
           ) : (
-            <>
-              {/* Vista de Tabla para Escritorio (>= 768px) */}
-              <div className="hidden md:block rounded-2xl border border-[#E2E6EA] bg-white shadow-xs overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-[#E2E6EA] bg-[#F8F9FA] text-[13px] font-bold uppercase tracking-wider text-[#687380]">
-                      <th className="py-3.5 px-4">Nombre Completo</th>
-                      <th className="py-3.5 px-4">Documento</th>
-                      <th className="py-3.5 px-4">Correo / Teléfono</th>
-                      <th className="py-3.5 px-4">Roles Asignados</th>
-                      <th className="py-3.5 px-4">Estado</th>
-                      <th className="py-3.5 px-4 text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#E2E6EA] text-sm">
-                    {users.map((user) => (
-                      <tr
-                        key={user.idUsuario}
-                        className="hover:bg-[#F8F9FA]/80 transition-colors"
-                      >
-                        <td className="py-4 px-4 font-bold text-[#1E242B]">
-                          <div>{user.nombreCompleto}</div>
-                          {user.firmaUrl && (
-                            <span className="mt-1 inline-flex items-center gap-1 rounded bg-[#FBF6E6] border border-[#D4AF37]/40 px-2 py-0.5 text-[13px] font-medium text-[#1E242B]">
-                              ✒ Firma registrada
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-4 px-4 font-mono text-[13px] text-[#1E242B]">
-                          {user.documentoIdentidad}
-                        </td>
-                        <td className="py-4 px-4">
-                          <div className="text-[#1E242B] font-medium">{user.correo}</div>
-                          <div className="text-[13px] text-[#687380]">
-                            {user.telefono ? `Tel: ${user.telefono}` : 'Sin teléfono'}
-                          </div>
-                        </td>
-                        <td className="py-4 px-4">
-                          <div className="flex flex-wrap gap-1.5">
-                            {user.roles
-                              .filter((r) => r.estadoAsignacion)
-                              .map((r) => (
-                                <span
-                                  key={r.idRol}
-                                  className="inline-flex items-center rounded-lg bg-[#FBF6E6] border border-[#D4AF37]/40 px-2.5 py-1 text-[13px] font-semibold text-[#1E242B]"
-                                >
-                                  {r.nombreRol}
-                                </span>
-                              ))}
-                          </div>
-                        </td>
-                        <td className="py-4 px-4">
-                          {user.estado ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#DCFCE7] px-3 py-1 text-[13px] font-bold text-[#15803D]">
-                              ● Estado: Activo
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#FEE2E2] px-3 py-1 text-[13px] font-bold text-[#B91C1C]">
-                              ○ Estado: Inactivo
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-4 px-4 text-right">
-                          <div className="inline-flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditModal(user)}
-                              className="min-h-[44px] rounded-xl border border-[#E2E6EA] bg-white px-3.5 py-2 text-[13px] font-bold text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D4AF37]"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleStatus(user)}
-                              className={`min-h-[44px] rounded-xl px-3.5 py-2 text-[13px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 ${
-                                user.estado
-                                  ? 'border border-[#B91C1C]/30 bg-[#FEE2E2] text-[#B91C1C] hover:bg-[#B91C1C] hover:text-white'
-                                  : 'border border-[#15803D]/30 bg-[#DCFCE7] text-[#15803D] hover:bg-[#15803D] hover:text-white'
-                              }`}
-                            >
-                              {user.estado ? 'Inactivar' : 'Activar'}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            filteredUsers.map((user) => {
+              const isInactive = !user.estado;
+              const isBusy = togglingUserId === user.idUsuario;
+              const activeRoles = user.roles.filter((r) => r.estadoAsignacion);
 
-              {/* Vista de Tarjetas Apiladas para Móvil (360px - 767px, cero scroll horizontal RQNF-COM-002) */}
-              <div className="grid grid-cols-1 gap-3.5 md:hidden">
-                {users.map((user) => (
-                  <article
-                    key={user.idUsuario}
-                    className="rounded-2xl border border-[#E2E6EA] bg-white p-4 shadow-xs space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h2 className="text-base font-bold text-[#1E242B]">
+              return (
+                <article
+                  key={user.idUsuario}
+                  className={`rounded-2xl border border-[#E2E6EA] bg-white px-5 py-4 shadow-2xs transition-all flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 ${
+                    isInactive ? 'opacity-80 bg-[#F8F9FA]/60' : 'hover:border-[#D4AF37]/50'
+                  }`}
+                >
+                  {/* Izquierda: Avatar Circular + Nombre + Badges + Teléfono y Correo */}
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div
+                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full border text-[14px] font-extrabold tracking-tight ${getAvatarCircleStyle(
+                        user
+                      )}`}
+                      aria-hidden="true"
+                    >
+                      {getInitials(user.nombreCompleto)}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      {/* Fila 1: Nombre completo + Píldoras de rol + Píldora INACTIVO */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2
+                          className={`text-[15px] font-bold leading-snug ${
+                            isInactive ? 'text-[#94A3B8]' : 'text-[#1E242B]'
+                          }`}
+                        >
                           {user.nombreCompleto}
                         </h2>
-                        <p className="text-[13px] font-mono text-[#687380]">
-                          Doc: {user.documentoIdentidad}
-                        </p>
-                      </div>
-                      {user.estado ? (
-                        <span className="inline-flex items-center rounded-lg bg-[#DCFCE7] px-2.5 py-1 text-[13px] font-bold text-[#15803D]">
-                          ✓ Activo
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center rounded-lg bg-[#FEE2E2] px-2.5 py-1 text-[13px] font-bold text-[#B91C1C]">
-                          ○ Inactivo
-                        </span>
-                      )}
-                    </div>
 
-                    <div className="text-[13px] text-[#1E242B] space-y-0.5">
-                      <p className="break-all">
-                        <span className="font-semibold text-[#687380]">Correo: </span>
-                        {user.correo}
-                      </p>
-                      <p>
-                        <span className="font-semibold text-[#687380]">Teléfono: </span>
-                        {user.telefono || 'No registrado'}
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {user.roles
-                        .filter((r) => r.estadoAsignacion)
-                        .map((r) => (
+                        {activeRoles.map((role) => (
                           <span
-                            key={r.idRol}
-                            className="rounded-lg bg-[#FBF6E6] border border-[#D4AF37]/40 px-2.5 py-1 text-[13px] font-semibold text-[#1E242B]"
+                            key={role.idRol}
+                            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold ${getRoleBadgeStyle(
+                              role.nombreRol,
+                              user.estado
+                            )}`}
                           >
-                            {r.nombreRol}
+                            {formatShortRoleLabel(role.nombreRol)}
                           </span>
                         ))}
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#E2E6EA]">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenEditModal(user)}
-                        className="min-h-[44px] rounded-xl border border-[#E2E6EA] bg-[#F8F9FA] px-3 py-2 text-[13px] font-bold text-[#1E242B] hover:border-[#D4AF37]"
-                      >
-                        Editar datos
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleStatus(user)}
-                        className={`min-h-[44px] rounded-xl px-3 py-2 text-[13px] font-bold ${
-                          user.estado
-                            ? 'bg-[#FEE2E2] text-[#B91C1C]'
-                            : 'bg-[#DCFCE7] text-[#15803D]'
+                        {isInactive && (
+                          <span className="inline-flex items-center rounded-md bg-[#FEE2E2] px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-[#B91C1C]">
+                            INACTIVO
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Fila 2: Teléfono + Correo + Documento */}
+                      <div
+                        className={`mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] ${
+                          isInactive ? 'text-[#94A3B8]' : 'text-[#687380]'
                         }`}
                       >
-                        {user.estado ? 'Inactivar' : 'Activar'}
-                      </button>
+                        <span className="inline-flex items-center gap-1.5">
+                          <svg
+                            className={`h-3.5 w-3.5 ${
+                              isInactive ? 'text-[#94A3B8]' : 'text-[#D4AF37]'
+                            }`}
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2}
+                            aria-hidden="true"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"
+                            />
+                          </svg>
+                          <span>{formatColombianPhone(user.telefono)}</span>
+                        </span>
+
+                        <span className="inline-flex items-center gap-1.5 break-all">
+                          <span
+                            className="font-semibold text-[#94A3B8]"
+                            aria-hidden="true"
+                          >
+                            @
+                          </span>
+                          <span>{user.correo}</span>
+                        </span>
+
+                        <span className="inline-flex items-center gap-1 text-[12px] font-mono text-[#94A3B8]">
+                          • Doc: {user.documentoIdentidad}
+                        </span>
+                      </div>
                     </div>
-                  </article>
-                ))}
-              </div>
-            </>
+                  </div>
+
+                  {/* Derecha: Botones Editar y Desactivar / Reactivar */}
+                  <div className="flex items-center gap-2.5 self-end sm:self-center shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditModal(user)}
+                      className={`min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#E2E6EA] bg-white px-3.5 py-1.5 text-[13px] font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#D4AF37] ${
+                        isInactive
+                          ? 'text-[#687380] hover:text-[#1E242B]'
+                          : 'text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6]/40'
+                      }`}
+                    >
+                      <svg
+                        className="h-3.5 w-3.5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        aria-hidden="true"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                        />
+                      </svg>
+                      <span>Editar</span>
+                    </button>
+
+                    {user.estado ? (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => handleToggleStatus(user)}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#FEE2E2] bg-white px-3.5 py-1.5 text-[13px] font-bold text-[#B91C1C] hover:bg-[#FEE2E2] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B91C1C] transition-colors"
+                      >
+                        <svg
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
+                          />
+                        </svg>
+                        <span>{isBusy ? 'Procesando...' : 'Desactivar'}</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isBusy}
+                        onClick={() => handleToggleStatus(user)}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#DCFCE7] bg-[#F0FDF4] px-3.5 py-1.5 text-[13px] font-bold text-[#15803D] hover:bg-[#DCFCE7] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#15803D] transition-colors"
+                      >
+                        <svg
+                          className="h-3.5 w-3.5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          aria-hidden="true"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                        <span>{isBusy ? 'Procesando...' : 'Reactivar'}</span>
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })
           )}
         </section>
       </div>
 
-      {/* Modal de Creación / Edición de Usuario */}
+      {/* Modal de Creación y Edición de Usuario (RF-USR-001 / RF-USR-002) */}
       <UserFormModal
         isOpen={isModalOpen}
         mode={modalMode}
