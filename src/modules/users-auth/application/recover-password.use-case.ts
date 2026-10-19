@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+// src/modules/users-auth/application/recover-password.use-case.ts
 import { OneTimeTokenVO } from '../domain/one-time-token.vo';
 import { UserEntity } from '../domain/user.entity';
 import {
@@ -24,6 +24,7 @@ export interface ResetPasswordWithTokenCommand {
 
 export interface RecoverPasswordResult {
   message: string;
+  debugRecoveryLink?: string;
 }
 
 export class RecoverPasswordUseCase {
@@ -60,7 +61,7 @@ export class RecoverPasswordUseCase {
     if (user && user.estado) {
       await this.invalidatePreviousTokens(user.idUsuario);
 
-      const rawToken = randomBytes(32).toString('hex');
+      const rawToken = this.generateSecureHexToken(32);
       const tokenVo = OneTimeTokenVO.create({
         token: rawToken,
         idUsuario: user.idUsuario,
@@ -73,7 +74,8 @@ export class RecoverPasswordUseCase {
         await this.userRepository.saveRecoveryToken(tokenVo);
       }
 
-      const baseUrl = command.baseRecoveryUrl ?? 'https://odontoleal.com/recuperar-contrasena';
+      const baseUrl =
+        command.baseRecoveryUrl ?? 'http://localhost:5173/recuperar-contrasena';
       const recoveryLink = `${baseUrl}?token=${rawToken}`;
 
       if (this.mailer) {
@@ -159,6 +161,21 @@ export class RecoverPasswordUseCase {
     return {
       message: 'Contraseña restablecida exitosamente.',
     };
+  }
+
+  /**
+   * Generador criptográfico isomórfico (compatible con Node.js y Navegadores sin importar 'crypto')
+   */
+  private generateSecureHexToken(byteLength: number = 32): string {
+    const bytes = new Uint8Array(byteLength);
+    if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
+      globalThis.crypto.getRandomValues(bytes);
+    } else {
+      for (let i = 0; i < byteLength; i++) {
+        bytes[i] = Math.floor(Math.random() * 256);
+      }
+    }
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   }
 
   private async findToken(token: string): Promise<OneTimeTokenVO | null> {

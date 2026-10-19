@@ -1,3 +1,4 @@
+// src/app/routes/api.routes.ts
 import { Router } from 'express';
 import { db } from '../../shared/infrastructure/database/database';
 
@@ -38,12 +39,20 @@ router.get('/health', async (_req, res) => {
   }
 });
 
-// 1. Rutas Módulo A: Usuarios y Roles
+// 1. Rutas Módulo A: Usuarios, Roles y Autenticación (RF-USR-001 a RF-USR-011)
+router.post('/auth/login', usersController.login);
+router.post('/auth/logout', usersController.logout);
+router.post('/auth/recovery/request', usersController.requestPasswordRecovery);
+router.post('/auth/recovery/reset', usersController.resetPasswordWithToken);
+
 router.post('/roles', usersController.createRole);
 router.get('/roles', usersController.getRoles);
+router.put('/roles/:id', usersController.updateRole);
 router.delete('/roles/:id', usersController.deleteRole);
+
 router.post('/users', usersController.createUser);
 router.get('/users', usersController.searchUsers);
+router.put('/users/:id', usersController.updateUser);
 router.patch('/users/:id/status', usersController.toggleUserStatus);
 
 // 2. Rutas Módulo B: Agendamiento de Citas
