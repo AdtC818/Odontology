@@ -123,16 +123,16 @@ export class RoleEntity {
     const permisos = props.permisos ?? [];
 
     if (!codigo) {
-      throw new Error('El código del rol es obligatorio (RF-USR-007).');
+      throw new Error('El código del rol es obligatorio.');
     }
     if (!nombreRol) {
-      throw new Error('El nombre del rol es obligatorio (RF-USR-007).');
+      throw new Error('El nombre del rol es obligatorio.');
     }
     if (nombreRol.length > 40) {
       throw new Error('El nombre del rol no puede exceder los 40 caracteres.');
     }
     if (!Array.isArray(permisos) || permisos.length === 0) {
-      throw new Error('Debe asignar al menos un permiso al rol (RF-USR-007).');
+      throw new Error('Debe asignar al menos un permiso al rol.');
     }
 
     for (const perm of permisos) {
@@ -141,7 +141,7 @@ export class RoleEntity {
       }
       if (CLINICAL_PERMISSIONS.includes(perm)) {
         throw new Error(
-          `No está permitido asignar el permiso clínico "${perm}" a un nuevo rol (RF-USR-007).`
+          `No está permitido asignar el permiso clínico "${perm}" a un nuevo rol.`
         );
       }
     }
@@ -169,16 +169,16 @@ export class RoleEntity {
     const nuevosPermisos = Array.from(new Set(params.permisos ?? []));
 
     if (!nuevoNombre) {
-      throw new Error('El nombre del rol no puede quedar vacío (RF-USR-010).');
+      throw new Error('El nombre del rol no puede quedar vacío.');
     }
     if (nuevoNombre.length > 40) {
       throw new Error('El nombre del rol no puede exceder los 40 caracteres.');
     }
 
-    // ROL-PAC no puede recibir permisos internos (RF-USR-010)
+    // ROL-PAC no puede recibir permisos internos
     if (this.codigo === 'ROL-PAC') {
       if (nuevosPermisos.length > 0) {
-        throw new Error('No se pueden asignar permisos internos al rol ROL-PAC (RF-USR-010).');
+        throw new Error('No se pueden asignar permisos internos al rol ROL-PAC.');
       }
       this._nombreRol = nuevoNombre;
       this._descripcion = nuevaDescripcion;
@@ -186,7 +186,7 @@ export class RoleEntity {
     }
 
     if (nuevosPermisos.length === 0) {
-      throw new Error('El rol no puede quedar sin permisos (RF-USR-010).');
+      throw new Error('El rol no puede quedar sin permisos.');
     }
 
     for (const perm of nuevosPermisos) {
@@ -195,19 +195,19 @@ export class RoleEntity {
       }
     }
 
-    // Prohibición de quitar permisos de administración de usuarios y roles a ROL-ADM (RF-USR-010)
+    // Prohibición de quitar permisos de administración de usuarios y roles a ROL-ADM
     if (this.codigo === 'ROL-ADM') {
       const missingAdminPerms = ADMIN_USER_ROLE_PERMISSIONS.filter(
         (adminPerm) => !nuevosPermisos.includes(adminPerm)
       );
       if (missingAdminPerms.length > 0) {
         throw new Error(
-          `No se pueden quitar a ROL-ADM los permisos de administración de usuarios y roles: ${missingAdminPerms.join(', ')} (RF-USR-010).`
+          `No se pueden quitar a ROL-ADM los permisos de administración de usuarios y roles: ${missingAdminPerms.join(', ')}.`
         );
       }
     }
 
-    // Prohibición de cambiar los permisos clínicos de cualquier rol (RF-USR-010)
+    // Prohibición de cambiar los permisos clínicos de cualquier rol
     const currentClinical = this._permisos.filter((p) => CLINICAL_PERMISSIONS.includes(p)).sort();
     const nextClinical = nuevosPermisos.filter((p) => CLINICAL_PERMISSIONS.includes(p)).sort();
 
@@ -216,7 +216,7 @@ export class RoleEntity {
       currentClinical.some((perm, idx) => perm !== nextClinical[idx])
     ) {
       throw new Error(
-        'No está permitido modificar los permisos clínicos de ningún rol (RF-USR-010).'
+        'No está permitido modificar los permisos clínicos de ningún rol.'
       );
     }
 
@@ -232,12 +232,12 @@ export class RoleEntity {
   public ensureCanBeDeleted(assignedUsersCount: number): void {
     if (this.isInitialRole()) {
       throw new Error(
-        `El rol ${this.codigo} (${this._nombreRol}) pertenece a la configuración inicial del sistema y no puede ser eliminado (RF-USR-011).`
+        `El rol ${this.codigo} (${this._nombreRol}) pertenece a la configuración inicial del sistema y no puede ser eliminado.`
       );
     }
     if (assignedUsersCount > 0) {
       throw new Error(
-        `No se puede eliminar el rol porque está asignado a ${assignedUsersCount} usuario(s) (RF-USR-011).`
+        `No se puede eliminar el rol porque está asignado a ${assignedUsersCount} usuario(s).`
       );
     }
   }

@@ -211,15 +211,22 @@ export function useAuth(options?: {
     [apiBase, clearTimers, options, session, unsavedFormDraft]
   );
 
-  // RF-USR-009: Solicitar enlace y restablecer contraseña
+  // Solicitar enlace y restablecer contraseña
   const requestPasswordRecovery = useCallback(
     async (
       command: RequestPasswordRecoveryCommand
     ): Promise<RecoverPasswordResult> => {
+      const origin =
+        typeof window !== 'undefined' && window.location.origin
+          ? window.location.origin
+          : undefined;
       const response = await fetch(`${apiBase}/auth/recovery/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(command),
+        body: JSON.stringify({
+          ...command,
+          baseRecoveryUrl: command.baseRecoveryUrl || origin,
+        }),
       });
       return response.json();
     },

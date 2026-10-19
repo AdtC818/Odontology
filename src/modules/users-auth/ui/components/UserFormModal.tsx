@@ -147,7 +147,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
     if (!ALLOWED_MIME_TYPES.includes(file.type.toLowerCase())) {
       setFieldErrors((prev) => ({
         ...prev,
-        firma: 'La imagen de firma debe estar en formato PNG o JPG (RF-USR-001).',
+        firma: 'La imagen de firma debe estar en formato PNG o JPG.',
       }));
       return;
     }
@@ -155,7 +155,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
     if (file.size > MAX_SIGNATURE_BYTES) {
       setFieldErrors((prev) => ({
         ...prev,
-        firma: 'La imagen de firma supera el peso máximo permitido de 2 MB (RF-USR-001).',
+        firma: 'La imagen de firma supera el peso máximo permitido de 2 MB.',
       }));
       return;
     }
@@ -255,8 +255,8 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
               </h2>
               <p className="text-[13px] sm:text-sm text-[#687380]">
                 {mode === 'CREATE'
-                  ? 'El usuario se creará en estado Activo y cambiará su clave en el primer ingreso (RF-USR-001).'
-                  : 'Los cambios de roles se aplican desde la siguiente acción del usuario (RF-USR-002).'}
+                  ? 'El usuario se creará en estado Activo y cambiará su clave en el primer ingreso.'
+                  : 'Los cambios de roles se aplican desde la siguiente acción del usuario.'}
               </p>
             </div>
           </div>
@@ -286,7 +286,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
               {conflictingAppointments.length > 0 && (
                 <div className="mt-3 rounded-lg bg-white/90 p-3 border border-[#B91C1C]/20">
                   <p className="font-bold text-[#1E242B] text-[13px]">
-                    Listado de citas asociadas por atender (RF-USR-002):
+                    Listado de citas asociadas por atender:
                   </p>
                   <ul className="mt-1.5 list-disc list-inside space-y-1 text-[13px] text-[#1E242B]">
                     {conflictingAppointments.map((cita) => (
@@ -414,7 +414,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
                   setCorreo(e.target.value);
                   setFieldErrors((prev) => ({ ...prev, correo: '' }));
                 }}
-                placeholder="usuario@odontoleal.com"
+                placeholder="correo@gmail.com"
                 className={`w-full min-h-[44px] rounded-xl border px-3.5 py-2.5 text-sm text-[#1E242B] placeholder-[#687380] transition-colors focus:bg-white focus:outline-none focus:ring-2 ${
                   fieldErrors.correo
                     ? 'border-[#B91C1C] bg-[#FEE2E2]/30 focus:ring-[#B91C1C]/30'
@@ -467,7 +467,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
               </div>
               {mode === 'EDIT' && !fieldErrors.contrasenaTemporal && (
                 <p className="mt-1 text-[13px] text-[#687380]">
-                  Si asigna una nueva, quedará como temporal para su próximo ingreso (RF-USR-002).
+                  Si asigna una nueva, quedará como temporal para su próximo ingreso.
                 </p>
               )}
               {fieldErrors.contrasenaTemporal && (
@@ -537,7 +537,7 @@ export const UserFormModal: React.FC<UserFormModalProps> = ({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-bold text-[#1E242B]">
-                    Firma Digitalizada del Profesional (RF-USR-001 / RF-DOC-004)
+                    Firma Digitalizada del Profesional
                   </h3>
                   <p className="text-[13px] text-[#687380]">
                     Formato permitido: PNG o JPG de máximo 2 MB. Se fusionará (flatten) en órdenes, incapacidades y remisiones.

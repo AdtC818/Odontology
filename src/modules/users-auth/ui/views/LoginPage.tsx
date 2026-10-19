@@ -186,7 +186,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
               <div>
                 <span className="inline-flex items-center rounded-md bg-[#DBEAFE] px-2.5 py-0.5 text-[13px] font-bold text-[#1D4ED8]">
-                  Borrador recuperado (RF-USR-008)
+                  Borrador recuperado
                 </span>
                 <h2 id="draft-recovery-title" className="mt-1.5 text-xl font-bold text-[#1E242B]">
                   Cambios sin guardar de su sesión anterior

@@ -10,7 +10,7 @@ export class ClinicalDocumentsController {
       if (tipoDocumento === 'INCAPACIDAD') {
         const dias = detalles?.diasIncapacidad;
         if (!dias || dias < 1 || dias > 30) {
-          res.status(400).json({ message: 'Los días de incapacidad deben ser un entero entre 1 y 30 (RF-DOC-002).' });
+          res.status(400).json({ message: 'Los días de incapacidad deben ser un entero entre 1 y 30.' });
           return;
         }
       }

@@ -177,7 +177,7 @@ export const InternalDashboardLayout: React.FC<InternalDashboardLayoutProps> = (
           </nav>
         </div>
 
-        {/* Botón inferior discreto para probar el aviso del minuto 29 (RF-USR-008) */}
+        {/* Botón inferior discreto para probar el aviso del minuto 29 */}
         {onSimulateMinute29 && (
           <div className="hidden lg:block p-4 border-t border-[#E2E6EA]">
             <button
@@ -185,7 +185,7 @@ export const InternalDashboardLayout: React.FC<InternalDashboardLayoutProps> = (
               onClick={onSimulateMinute29}
               className="w-full min-h-[40px] rounded-xl border border-[#E2E6EA] bg-[#F8F9FA] px-3 py-2 text-left text-[12px] font-semibold text-[#687380] hover:border-[#D4AF37] hover:text-[#1E242B] transition-colors"
             >
-              ⏱ Simular minuto 29 (RF-USR-008)
+              ⏱ Simular minuto 29
             </button>
           </div>
         )}
@@ -209,8 +209,8 @@ export const InternalDashboardLayout: React.FC<InternalDashboardLayoutProps> = (
               type="text"
               value={topSearchQuery}
               onChange={(e) => setTopSearchQuery(e.target.value)}
-              placeholder="Buscar paciente por nombre o DNI..."
-              aria-label="Buscar paciente por nombre o DNI"
+              placeholder="Buscar paciente por nombre o CC..."
+              aria-label="Buscar paciente por nombre o CC"
               className="w-full min-h-[42px] rounded-xl border border-[#E2E6EA] bg-[#F8F9FA]/70 pl-10 pr-9 py-2 text-[13px] sm:text-sm text-[#1E242B] placeholder-[#94A3B8] focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20 transition-colors"
             />
             {topSearchQuery && (

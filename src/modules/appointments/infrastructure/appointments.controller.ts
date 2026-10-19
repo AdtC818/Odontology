@@ -38,7 +38,7 @@ export class AppointmentsController {
         descripcion,
       });
       res.status(201).json({
-        message: 'Solicitud registrada y sujeta a aprobación del consultorio (RF-AGE-003).',
+        message: 'Solicitud registrada y sujeta a aprobación del consultorio.',
         data: result,
       });
     } catch (error: any) {
@@ -58,7 +58,7 @@ export class AppointmentsController {
         idPaciente,
         idProfesional,
       });
-      res.json({ message: 'Solicitud gestionada correctamente (RF-AGE-005).', data: result });
+      res.json({ message: 'Solicitud gestionada correctamente.', data: result });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -75,7 +75,7 @@ export class AppointmentsController {
         idUsuarioGestor,
         bloques,
       });
-      res.status(201).json({ message: 'Cita Confirmada exitosamente (RF-AGE-002).', data: cita });
+      res.status(201).json({ message: 'Cita confirmada exitosamente.', data: cita });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }

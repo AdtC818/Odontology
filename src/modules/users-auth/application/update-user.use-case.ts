@@ -44,10 +44,10 @@ export class UpdateUserUseCase {
     }
 
     if (!Array.isArray(command.rolesIds) || command.rolesIds.length === 0) {
-      throw new Error('El usuario no puede quedar sin roles asignados (RF-USR-002).');
+      throw new Error('El usuario no puede quedar sin roles asignados.');
     }
 
-    // Validar unicidad de documento frente a otros usuarios (RF-USR-002)
+    // Validar unicidad de documento frente a otros usuarios
     const cleanDoc = command.documentoIdentidad?.trim();
     if (cleanDoc && cleanDoc !== currentUserRecord.documentoIdentidad) {
       const userWithSameDoc = this.userRepository.findByDocument
@@ -56,12 +56,12 @@ export class UpdateUserUseCase {
 
       if (userWithSameDoc && userWithSameDoc.idUsuario !== command.idUsuario) {
         throw new Error(
-          `El documento de identidad ya pertenece al usuario ${userWithSameDoc.nombreCompleto} (Documento: ${userWithSameDoc.documentoIdentidad}) (RF-USR-002).`
+          `El documento de identidad ya pertenece al usuario ${userWithSameDoc.nombreCompleto} (Documento: ${userWithSameDoc.documentoIdentidad}).`
         );
       }
     }
 
-    // Validar unicidad de correo frente a otros usuarios (RF-USR-002)
+    // Validar unicidad de correo frente a otros usuarios
     const cleanEmail = command.correo?.trim().toLowerCase();
     if (cleanEmail && cleanEmail !== currentUserRecord.correo.toLowerCase()) {
       const userWithSameEmail = this.userRepository.findByEmail
@@ -72,7 +72,7 @@ export class UpdateUserUseCase {
 
       if (userWithSameEmail && userWithSameEmail.idUsuario !== command.idUsuario) {
         throw new Error(
-          `El correo electrónico ya pertenece al usuario ${userWithSameEmail.nombreCompleto} (Documento: ${userWithSameEmail.documentoIdentidad}) (RF-USR-002).`
+          `El correo electrónico ya pertenece al usuario ${userWithSameEmail.nombreCompleto} (Documento: ${userWithSameEmail.documentoIdentidad}).`
         );
       }
     }
@@ -148,17 +148,17 @@ export class UpdateUserUseCase {
       firma: command.firma,
     });
 
-    // Verificar que no se quite ROL-ADM al único administrador activo (RF-USR-002)
+    // Verificar que no se quite ROL-ADM al único administrador activo
     if (wasAdmin && !domainUser.isAdmin() && currentUserRecord.estado) {
       const remainingAdmins = await this.countRemainingActiveAdmins(command.idUsuario);
       if (remainingAdmins === 0) {
         throw new Error(
-          'No se puede retirar el rol de Administrador (ROL-ADM) al único administrador activo del sistema (RF-USR-002).'
+          'No se puede retirar el rol de Administrador (ROL-ADM) al único administrador activo del sistema.'
         );
       }
     }
 
-    // Verificar que un profesional con citas activas no quede sin ROL-ODO ni ROL-ESP (RF-USR-002)
+    // Verificar que un profesional con citas activas no quede sin ROL-ODO ni ROL-ESP
     if (wasProfessional && !domainUser.isProfessional()) {
       const activeAppointments = this.userRepository.findActiveAppointmentsByProfessional
         ? await this.userRepository.findActiveAppointmentsByProfessional(command.idUsuario)
@@ -169,7 +169,7 @@ export class UpdateUserUseCase {
           .map((c) => `#${c.idCita} (${c.titulo} - ${c.estado})`)
           .join(', ');
         throw new Error(
-          `No se pueden retirar los roles profesionales (ROL-ODO / ROL-ESP) porque el usuario tiene ${activeAppointments.length} cita(s) en estado Solicitada, Confirmada o En consulta: [${citasDetalle}] (RF-USR-002).`
+          `No se pueden retirar los roles profesionales (ROL-ODO / ROL-ESP) porque el usuario tiene ${activeAppointments.length} cita(s) en estado Solicitada, Confirmada o En consulta: [${citasDetalle}].`
         );
       }
     }
@@ -189,7 +189,7 @@ export class UpdateUserUseCase {
     if (this.auditLogger) {
       await this.auditLogger.log({
         usuario: command.ejecutadoPorUsuario || 'ROL-ADM',
-        accion: 'RF-USR-002: Editar usuario',
+        accion: 'Editar usuario',
         registroAfectado: `usuario:${command.idUsuario}`,
         valorAnterior: currentUserRecord,
         valorNuevo: updatedUser,

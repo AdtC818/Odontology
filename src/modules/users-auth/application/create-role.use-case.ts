@@ -27,10 +27,9 @@ export class CreateRoleUseCase {
   public async execute(command: CreateRoleCommand): Promise<CreateRoleResult> {
     const cleanName = command.nombreRol?.trim();
     if (!cleanName) {
-      throw new Error('El campo nombreRol es obligatorio (RF-USR-007).');
+      throw new Error('El campo nombreRol es obligatorio.');
     }
 
-    // Garantizar compatibilidad con llamadas legadas o con el payload completo de RF-USR-007
     const roleCode = (
       command.codigo?.trim() ||
       `ROL-${cleanName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 6)}`
@@ -55,7 +54,7 @@ export class CreateRoleUseCase {
 
     if (isDuplicate) {
       throw new Error(
-        `Ya existe un rol con el código "${roleEntity.codigo}" o el nombre "${roleEntity.nombreRol}" (RF-USR-007).`
+        `Ya existe un rol con el código "${roleEntity.codigo}" o el nombre "${roleEntity.nombreRol}".`
       );
     }
 
@@ -76,7 +75,7 @@ export class CreateRoleUseCase {
     if (this.auditLogger) {
       await this.auditLogger.log({
         usuario: command.ejecutadoPorUsuario || 'ROL-ADM',
-        accion: 'RF-USR-007: Crear rol',
+        accion: 'Crear rol',
         registroAfectado: `rol:${enrichedRole.id_rol}`,
         valorNuevo: enrichedRole,
       });

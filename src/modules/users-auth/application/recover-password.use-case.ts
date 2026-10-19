@@ -74,9 +74,11 @@ export class RecoverPasswordUseCase {
         await this.userRepository.saveRecoveryToken(tokenVo);
       }
 
-      const baseUrl =
-        command.baseRecoveryUrl ?? 'http://localhost:5173/recuperar-contrasena';
-      const recoveryLink = `${baseUrl}?token=${rawToken}`;
+      const rawBase = command.baseRecoveryUrl ?? 'http://localhost:5173';
+      const cleanBase = rawBase.replace(/\/+$/, '');
+      const recoveryLink = cleanBase.includes('?')
+        ? `${cleanBase}&token=${rawToken}`
+        : `${cleanBase}/?token=${rawToken}`;
 
       if (this.mailer) {
         await this.mailer.sendPasswordRecoveryEmail({
@@ -90,10 +92,15 @@ export class RecoverPasswordUseCase {
       if (this.auditLogger) {
         await this.auditLogger.log({
           usuario: user.correo,
-          accion: 'RF-USR-009: Generación de enlace de recuperación de contraseña',
+          accion: 'Generación de enlace de recuperación de contraseña',
           registroAfectado: `usuario:${user.idUsuario}`,
         });
       }
+
+      return {
+        message: RecoverPasswordUseCase.GENERIC_RESPONSE_MESSAGE,
+        debugRecoveryLink: recoveryLink,
+      };
     }
 
     return {
@@ -101,7 +108,7 @@ export class RecoverPasswordUseCase {
     };
   }
 
-  // Paso 2: Restablecer la contraseña usando el enlace de un solo uso (RF-USR-009)
+  // Paso 2: Restablecer la contraseña usando el enlace de un solo uso
   public async resetPassword(
     command: ResetPasswordWithTokenCommand
   ): Promise<RecoverPasswordResult> {
@@ -120,7 +127,7 @@ export class RecoverPasswordUseCase {
     tokenVo.assertIsValid(now);
 
     if (command.nuevaContrasena !== command.confirmacionContrasena) {
-      throw new Error('Las contraseñas ingresadas no coinciden (RF-USR-009).');
+      throw new Error('Las contraseñas ingresadas no coinciden.');
     }
 
     UserEntity.validatePlainPassword(command.nuevaContrasena);
@@ -153,7 +160,7 @@ export class RecoverPasswordUseCase {
     if (this.auditLogger) {
       await this.auditLogger.log({
         usuario: tokenVo.correo,
-        accion: 'RF-USR-009: Contraseña restablecida con enlace de un solo uso',
+        accion: 'Contraseña restablecida con enlace de un solo uso',
         registroAfectado: `usuario:${tokenVo.idUsuario}`,
       });
     }

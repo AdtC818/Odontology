@@ -47,6 +47,8 @@ const DEFAULT_ROLES_FALLBACK: RoleDTO[] = [
   { id_rol: 5, codigo: 'ROL-AUX', nombre_rol: 'Auxiliar de Odontología' },
 ];
 
+const ITEMS_PER_PAGE = 5;
+
 export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
   initialUsers = EMPTY_USERS,
   initialRoles = DEFAULT_ROLES_FALLBACK,
@@ -68,6 +70,14 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [rolIdFilter, setRolIdFilter] = useState<string>('ALL');
   const [estadoFilter, setEstadoFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+
+  // Estado de paginación (máximo 5 elementos por página)
+  const [currentPage, setCurrentPage] = useState<number>(1);
+
+  // Resetear a la página 1 cuando cualquier filtro cambie
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, rolIdFilter, estadoFilter]);
 
   // Mensajes de estado
   const [bannerSuccess, setBannerSuccess] = useState<string | null>(null);
@@ -196,6 +206,18 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
         })
       );
   }, [allLoadedUsers, searchQuery, rolIdFilter, estadoFilter]);
+
+  // Cálculos de paginación para máximo 5 elementos por página
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedUsers = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
+    return filteredUsers.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+  }, [filteredUsers, safeCurrentPage]);
+
+  const startIndex = filteredUsers.length === 0 ? 0 : (safeCurrentPage - 1) * ITEMS_PER_PAGE + 1;
+  const endIndex = Math.min(safeCurrentPage * ITEMS_PER_PAGE, filteredUsers.length);
 
   const handleOpenCreateModal = () => {
     setModalMode('CREATE');
@@ -420,7 +442,7 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
           >
             <div>
               <p className="font-bold">
-                💾 Tiene un borrador sin guardar del formulario de usuarios (RF-USR-008)
+                💾 Tiene un borrador sin guardar del formulario de usuarios
               </p>
               <p className="mt-0.5">
                 Conservado tras el cierre automático de su sesión anterior.
@@ -573,11 +595,11 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
                 ninguna coincidencia encontrada
               </p>
               <p className="text-[13px] text-[#687380]">
-                No se encontraron usuarios que coincidan con los criterios seleccionados (RF-USR-004).
+                No se encontraron usuarios que coincidan con los criterios seleccionados.
               </p>
             </div>
           ) : (
-            filteredUsers.map((user) => {
+            paginatedUsers.map((user) => {
               const isInactive = !user.estado;
               const isBusy = togglingUserId === user.idUsuario;
               const activeRoles = user.roles.filter((r) => r.estadoAsignacion);
@@ -753,10 +775,66 @@ export const UsersManagementPage: React.FC<UsersManagementPageProps> = ({
               );
             })
           )}
+
+          {/* Barra de Controles de Paginación (Máximo 5 elementos) */}
+          {!isInitialLoading && filteredUsers.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-[#E2E6EA] bg-white px-5 py-4 shadow-2xs mt-4">
+              <div className="text-[13px] text-[#687380]">
+                Mostrando <strong className="text-[#1E242B]">{startIndex}–{endIndex}</strong> de{' '}
+                <strong className="text-[#1E242B]">{filteredUsers.length}</strong> {filteredUsers.length === 1 ? 'doctor registrado' : 'doctores y equipo'}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={safeCurrentPage === 1}
+                  aria-label="Página anterior"
+                  className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#E2E6EA] bg-white px-3.5 py-1.5 text-[13px] font-bold text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6]/40 disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+                >
+                  <span aria-hidden="true">←</span>
+                  <span>Anterior</span>
+                </button>
+
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => {
+                    const isPageActive = pageNum === safeCurrentPage;
+                    return (
+                      <button
+                        key={pageNum}
+                        type="button"
+                        onClick={() => setCurrentPage(pageNum)}
+                        aria-label={`Ir a la página ${pageNum}`}
+                        aria-current={isPageActive ? 'page' : undefined}
+                        className={`min-h-[36px] min-w-[36px] rounded-xl px-2.5 py-1 text-[13px] font-bold transition-all ${
+                          isPageActive
+                            ? 'bg-[#111111] text-white shadow-xs'
+                            : 'border border-[#E2E6EA] bg-white text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6]/40'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                  aria-label="Página siguiente"
+                  className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-[#E2E6EA] bg-white px-3.5 py-1.5 text-[13px] font-bold text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6]/40 disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+                >
+                  <span>Siguiente</span>
+                  <span aria-hidden="true">→</span>
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       </div>
 
-      {/* Modal de Creación y Edición de Usuario (RF-USR-001 / RF-USR-002) */}
+      {/* Modal de Creación y Edición de Usuario */}
       <UserFormModal
         isOpen={isModalOpen}
         mode={modalMode}

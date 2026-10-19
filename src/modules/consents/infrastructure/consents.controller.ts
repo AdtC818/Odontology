@@ -12,7 +12,7 @@ export class ConsentsController {
         plantillaUrl,
         tipoConsentimiento: Boolean(tipoConsentimiento),
       });
-      res.status(201).json({ message: 'Plantilla creada en versión 1 (RF-CON-004).', data: created });
+      res.status(201).json({ message: 'Plantilla creada en versión 1.', data: created });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -22,7 +22,7 @@ export class ConsentsController {
     try {
       const id = Number(req.params.id);
       const updated = await this.consentRepo.updateTemplateVersion(id, req.body);
-      res.json({ message: 'Nueva versión de plantilla generada (RF-CON-007).', data: updated });
+      res.json({ message: 'Nueva versión de plantilla generada.', data: updated });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -33,7 +33,7 @@ export class ConsentsController {
       const id = Number(req.params.id);
       const { estado } = req.body;
       const updated = await this.consentRepo.toggleTemplateStatus(id, Boolean(estado));
-      res.json({ message: 'Estado de plantilla actualizado (RF-CON-008).', data: updated });
+      res.json({ message: 'Estado de plantilla actualizado.', data: updated });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -58,7 +58,7 @@ export class ConsentsController {
         idCita,
         archivoUrl,
       });
-      res.status(201).json({ message: 'Consentimiento firmado guardado exitosamente (RF-CON-002).', data: signed });
+      res.status(201).json({ message: 'Consentimiento firmado guardado exitosamente.', data: signed });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }

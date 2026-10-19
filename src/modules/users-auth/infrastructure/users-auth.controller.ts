@@ -12,6 +12,8 @@ import { UpdateRoleUseCase } from '../application/update-role.use-case';
 import { UpdateUserUseCase } from '../application/update-user.use-case';
 import { DraftStorageService } from './draft-storage.service';
 import { HybridPasswordHasherService } from './password-hasher.service';
+import { MailerService } from '../../../shared/infrastructure/mail/mailer.service';
+import { envConfig } from '../../../app/config/env.config';
 import { UserRepository } from './user.repository';
 
 export class UsersAuthController {
@@ -29,6 +31,7 @@ export class UsersAuthController {
   constructor(private readonly userRepo: UserRepository) {
     const draftStorage = new DraftStorageService();
     const passwordHasher = new HybridPasswordHasherService();
+    const mailer = new MailerService();
 
     this.createRoleUseCase = new CreateRoleUseCase(this.userRepo);
     this.updateRoleUseCase = new UpdateRoleUseCase(this.userRepo);
@@ -44,7 +47,8 @@ export class UsersAuthController {
     this.closeSessionUseCase = new CloseSessionUseCase(this.userRepo, draftStorage);
     this.recoverPasswordUseCase = new RecoverPasswordUseCase(
       this.userRepo,
-      passwordHasher
+      passwordHasher,
+      mailer
     );
   }
 
@@ -260,13 +264,13 @@ export class UsersAuthController {
     }
   };
 
-  // RF-USR-009: Solicitar enlace de recuperación
+  // Solicitar enlace de recuperación
   requestPasswordRecovery = async (req: Request, res: Response): Promise<void> => {
     try {
       const { correo, baseRecoveryUrl } = req.body;
       const result = await this.recoverPasswordUseCase.requestRecoveryLink({
         correo,
-        baseRecoveryUrl,
+        baseRecoveryUrl: baseRecoveryUrl || envConfig.frontendUrl,
       });
       res.json(result);
     } catch (error: any) {

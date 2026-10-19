@@ -76,7 +76,7 @@ export const InactivityWarningModal: React.FC<InactivityWarningModalProps> = ({
 
         <div className="mt-4 text-center">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FEE2E2] px-3 py-1 text-[13px] font-bold text-[#B91C1C]">
-            ⚠ Minuto 29 de inactividad alcanzado (RF-USR-008)
+            ⚠ Aviso de inactividad por seguridad
           </span>
 
           <h2

@@ -105,13 +105,13 @@ export const RolePermissionsMatrix: React.FC<RolePermissionsMatrixProps> = ({
   const getLockReason = (permCode: string): string | null => {
     if (disabled) return 'Modo de solo lectura';
     if (isPatientRole) {
-      return 'Bloqueado: ROL-PAC no puede tener permisos internos (RF-USR-010)';
+      return 'Bloqueado: El rol Paciente no puede tener permisos internos';
     }
     if (CLINICAL_PERMISSIONS.includes(permCode)) {
-      return 'Fijo por normativa clínica: permiso clínico inmutable (RF-USR-007 / RF-USR-010)';
+      return 'Fijo por normativa clínica: reservado a odontólogos';
     }
     if (isAdminRole && ADMIN_USER_ROLE_PERMISSIONS.includes(permCode)) {
-      return 'Protegido: obligatorio para ROL-ADM (RF-USR-010)';
+      return 'Protegido: obligatorio para Administrador';
     }
     return null;
   };
@@ -151,21 +151,21 @@ export const RolePermissionsMatrix: React.FC<RolePermissionsMatrixProps> = ({
   return (
     <section
       aria-label="Matriz de permisos del rol"
-      className="w-full rounded-2xl border border-[#E2E6EA] bg-white p-4 sm:p-6 shadow-sm"
+      className="w-full rounded-2xl border border-[#E2E6EA] bg-white p-4 sm:p-5 shadow-2xs"
     >
       {/* Cabecera e indicadores de estado */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-[#E2E6EA] pb-4">
         <div>
           <h3 className="text-base sm:text-lg font-bold text-[#1E242B]">
-            Matriz de Permisos por Requisito Funcional (RBAC)
+            Matriz de Permisos del Sistema
           </h3>
-          <p className="text-[13px] sm:text-sm text-[#687380] mt-0.5">
-            Los permisos clínicos son fijos según la Regla de Negocio 5 y no pueden asignarse a roles nuevos ni alterarse.
+          <p className="text-[13px] text-[#687380] mt-0.5">
+            Los permisos clínicos son reservados por normativa y no pueden asignarse a roles nuevos ni alterarse.
           </p>
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-center">
-          <span className="inline-flex items-center gap-1.5 rounded-xl bg-[#FBF6E6] border border-[#D4AF37]/40 px-3 py-1.5 text-[13px] font-semibold text-[#1E242B]">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#FBF6E6] border border-[#D4AF37]/40 px-3 py-1 text-[12px] font-bold text-[#B8942A]">
             <span className="h-2 w-2 rounded-full bg-[#D4AF37]" aria-hidden="true" />
             {selectedPermissions.length} permiso(s) activo(s)
           </span>
@@ -176,9 +176,9 @@ export const RolePermissionsMatrix: React.FC<RolePermissionsMatrixProps> = ({
       <div className="mt-4">
         <label
           htmlFor="permission-search-input"
-          className="block text-[13px] font-bold uppercase tracking-wider text-[#1E242B] mb-1.5"
+          className="block text-[12px] font-bold uppercase tracking-wider text-[#1E242B] mb-1.5"
         >
-          Filtrar permiso por código o nombre
+          Filtrar permisos
         </label>
         <div className="relative">
           <input
@@ -186,8 +186,8 @@ export const RolePermissionsMatrix: React.FC<RolePermissionsMatrixProps> = ({
             type="search"
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
-            placeholder="Ej. RF-AGE-008, Consultar agenda, Pacientes..."
-            className="w-full min-h-[44px] rounded-xl border border-[#E2E6EA] bg-[#F3F5F7] pl-4 pr-4 py-2.5 text-sm text-[#1E242B] placeholder-[#687380] transition-colors focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
+            placeholder="Buscar por nombre de acción o módulo..."
+            className="w-full min-h-[42px] rounded-xl border border-[#E2E6EA] bg-[#F8F9FA] px-4 py-2 text-sm text-[#1E242B] placeholder-[#94A3B8] transition-colors focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
           />
         </div>
       </div>
@@ -310,14 +310,9 @@ export const RolePermissionsMatrix: React.FC<RolePermissionsMatrixProps> = ({
                           </div>
 
                           <div className="flex-1 min-w-0">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="rounded-md bg-[#111111] px-2 py-0.5 text-[13px] font-mono font-semibold text-white">
-                                {perm.code}
-                              </span>
-                              <span className="text-sm font-bold text-[#1E242B]">
-                                {perm.name}
-                              </span>
-                            </div>
+                            <h5 className="text-sm font-bold text-[#1E242B]">
+                              {perm.name}
+                            </h5>
                             <p className="mt-1 text-[13px] text-[#687380] leading-snug">
                               {perm.description}
                             </p>

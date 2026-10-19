@@ -106,14 +106,14 @@ export class UserEntity {
   public static validatePlainPassword(plainPassword: string): void {
     if (!plainPassword || plainPassword.length < UserEntity.PASSWORD_MIN_LENGTH) {
       throw new Error(
-        'Campo contrasena: La contraseña debe tener mínimo 8 caracteres con al menos una letra y un número (RF-USR-001).'
+        'Campo contrasena: La contraseña debe tener mínimo 8 caracteres con al menos una letra y un número.'
       );
     }
     const hasLetter = /[a-zA-Z]/.test(plainPassword);
     const hasNumber = /\d/.test(plainPassword);
     if (!hasLetter || !hasNumber) {
       throw new Error(
-        'Campo contrasena: La contraseña debe tener mínimo 8 caracteres con al menos una letra y un número (RF-USR-001).'
+        'Campo contrasena: La contraseña debe tener mínimo 8 caracteres con al menos una letra y un número.'
       );
     }
   }
@@ -125,14 +125,14 @@ export class UserEntity {
     telefono?: string | null;
   }): void {
     if (!params.nombreCompleto || !params.nombreCompleto.trim()) {
-      throw new Error('Campo nombreCompleto: El nombre completo es obligatorio (RF-USR-001).');
+      throw new Error('Campo nombreCompleto: El nombre completo es obligatorio.');
     }
     if (params.nombreCompleto.trim().length > 150) {
       throw new Error('Campo nombreCompleto: No puede superar los 150 caracteres.');
     }
     if (!params.documentoIdentidad || !UserEntity.DOCUMENT_REGEX.test(params.documentoIdentidad.trim())) {
       throw new Error(
-        'Campo documentoIdentidad: El documento de identidad es obligatorio y debe contener solo dígitos (RF-USR-001).'
+        'Campo documentoIdentidad: El documento de identidad es obligatorio y debe contener solo dígitos.'
       );
     }
     if (params.documentoIdentidad.trim().length > 20) {
@@ -140,13 +140,13 @@ export class UserEntity {
     }
     if (!params.correo || !UserEntity.EMAIL_REGEX.test(params.correo.trim())) {
       throw new Error(
-        'Campo correo: El correo electrónico es obligatorio y debe tener formato usuario@dominio (RF-USR-001).'
+        'Campo correo: El correo electrónico es obligatorio y debe tener formato usuario@dominio.'
       );
     }
     if (params.telefono !== undefined && params.telefono !== null && params.telefono.trim() !== '') {
       if (!UserEntity.PHONE_REGEX.test(params.telefono.trim())) {
         throw new Error(
-          'Campo telefono: El teléfono debe contener exactamente 10 dígitos numéricos (RF-USR-001).'
+          'Campo telefono: El teléfono debe contener exactamente 10 dígitos numéricos.'
         );
       }
     }
@@ -157,14 +157,14 @@ export class UserEntity {
     signature?: SignatureImageInput | null
   ): void {
     if (!Array.isArray(roles) || roles.length === 0) {
-      throw new Error('Campo roles: Debe asignar al menos un rol al usuario (RF-USR-001).');
+      throw new Error('Campo roles: Debe asignar al menos un rol al usuario.');
     }
 
     const hasPatientRole = roles.some(
       (r) => r.codigo === 'ROL-PAC' || r.nombreRol.toUpperCase() === 'PACIENTE'
     );
     if (hasPatientRole) {
-      throw new Error('Campo roles: El rol ROL-PAC no puede asignarse a ninguna cuenta de usuario (RF-USR-001).');
+      throw new Error('Campo roles: El rol ROL-PAC no puede asignarse a ninguna cuenta de usuario.');
     }
 
     if (signature) {
@@ -179,19 +179,19 @@ export class UserEntity {
 
       if (!isProfessional) {
         throw new Error(
-          'Campo firma: La imagen de firma solo puede cargarse a usuarios con rol ROL-ODO o ROL-ESP (RF-USR-001).'
+          'Campo firma: La imagen de firma solo puede cargarse a usuarios con rol ROL-ODO o ROL-ESP.'
         );
       }
 
       if (!UserEntity.ALLOWED_SIGNATURE_MIMES.includes(signature.mimeType.toLowerCase())) {
         throw new Error(
-          'Campo firma: La imagen de firma debe estar en formato PNG o JPG (RF-USR-001).'
+          'Campo firma: La imagen de firma debe estar en formato PNG o JPG.'
         );
       }
 
       if (signature.sizeInBytes > UserEntity.MAX_SIGNATURE_SIZE_BYTES) {
         throw new Error(
-          'Campo firma: La imagen de firma no puede superar el tamaño máximo de 2 MB (RF-USR-001).'
+          'Campo firma: La imagen de firma no puede superar el tamaño máximo de 2 MB.'
         );
       }
     }

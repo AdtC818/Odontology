@@ -8,7 +8,7 @@ export class PatientsController {
     try {
       const { nombreCompleto, documentoIdentidad, correo, telefono, fechaNacimiento, sexo } = req.body;
       if (!nombreCompleto || !documentoIdentidad || !fechaNacimiento) {
-        res.status(400).json({ message: 'Nombre, documento y fecha de nacimiento son obligatorios (RF-HCL-001).' });
+        res.status(400).json({ message: 'Nombre, documento y fecha de nacimiento son obligatorios.' });
         return;
       }
       const patient = await this.patientRepo.createPatient({
@@ -33,7 +33,7 @@ export class PatientsController {
         res.status(404).json({ message: 'Paciente no encontrado.' });
         return;
       }
-      res.json({ message: 'Datos del paciente actualizados (RF-HCL-002).', data: updated });
+      res.json({ message: 'Datos del paciente actualizados.', data: updated });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }

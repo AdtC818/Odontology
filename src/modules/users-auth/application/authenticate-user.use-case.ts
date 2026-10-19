@@ -90,16 +90,16 @@ export class AuthenticateUserUseCase {
       if (!command.nuevaContrasena || !command.confirmacionNuevaContrasena) {
         return {
           requiereCambioContrasena: true,
-          message: 'Debe cambiar su contraseña temporal antes de acceder al sistema (RF-USR-005).',
+          message: 'Debe cambiar su contraseña temporal antes de acceder al sistema.',
         };
       }
 
       if (command.nuevaContrasena !== command.confirmacionNuevaContrasena) {
-        throw new Error('La nueva contraseña y su confirmación no coinciden (RF-USR-005).');
+        throw new Error('La nueva contraseña y su confirmación no coinciden.');
       }
 
       if (command.nuevaContrasena === command.contrasena) {
-        throw new Error('La nueva contraseña debe ser distinta de la contraseña temporal (RF-USR-005).');
+        throw new Error('La nueva contraseña debe ser distinta de la contraseña temporal.');
       }
 
       UserEntity.validatePlainPassword(command.nuevaContrasena);

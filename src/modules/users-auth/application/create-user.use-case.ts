@@ -33,7 +33,7 @@ export class CreateUserUseCase {
 
   public async execute(command: CreateUserCommand): Promise<CreateUserResult> {
     if (!Array.isArray(command.rolesIds) || command.rolesIds.length === 0) {
-      throw new Error('Campo rolesIds: Debe asignar al menos un rol al usuario (RF-USR-001).');
+      throw new Error('Campo rolesIds: Debe asignar al menos un rol al usuario.');
     }
 
     // Verificar duplicidad de documento de identidad
@@ -47,7 +47,7 @@ export class CreateUserUseCase {
 
     if (existingByDoc) {
       throw new Error(
-        `Campo documentoIdentidad: El documento ${command.documentoIdentidad.trim()} ya está registrado por ${existingByDoc.nombreCompleto} (RF-USR-001).`
+        `Campo documentoIdentidad: El documento ${command.documentoIdentidad.trim()} ya está registrado por ${existingByDoc.nombreCompleto}.`
       );
     }
 
@@ -61,7 +61,7 @@ export class CreateUserUseCase {
 
     if (existingByEmail) {
       throw new Error(
-        `Campo correo: El correo electrónico ${normalizedEmail} ya está registrado en el sistema (RF-USR-001).`
+        `Campo correo: El correo electrónico ${normalizedEmail} ya está registrado en el sistema.`
       );
     }
 
@@ -94,7 +94,7 @@ export class CreateUserUseCase {
         ? await this.passwordHasher.hash(command.contrasenaTemporal)
         : command.contrasenaTemporal;
     } else if (!finalPasswordHash) {
-      throw new Error('Campo contrasena: La contraseña temporal es obligatoria (RF-USR-001).');
+      throw new Error('Campo contrasena: La contraseña temporal es obligatoria.');
     }
 
     const userEntity = UserEntity.createNew({
@@ -122,7 +122,7 @@ export class CreateUserUseCase {
     if (this.auditLogger) {
       await this.auditLogger.log({
         usuario: command.ejecutadoPorUsuario || 'ROL-ADM',
-        accion: 'RF-USR-001: Crear usuario',
+        accion: 'Crear usuario',
         registroAfectado: `usuario:${createdUser.idUsuario}`,
         valorNuevo: {
           idUsuario: createdUser.idUsuario,

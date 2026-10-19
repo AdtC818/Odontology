@@ -106,7 +106,7 @@ export const LoginAuthCard: React.FC<LoginAuthCardProps> = ({
           </h1>
           <p className="mt-1.5 text-sm text-[#687380] leading-relaxed">
             {requiresTemporaryPasswordChange
-              ? 'Por seguridad, actualice su contraseña temporal en este primer ingreso (RF-USR-005)'
+              ? 'Por seguridad, actualice su contraseña temporal en este primer ingreso'
               : 'Accede al sistema de gestión clínica de OdontoLeal'}
           </p>
         </div>
@@ -147,7 +147,7 @@ export const LoginAuthCard: React.FC<LoginAuthCardProps> = ({
                 disabled={isSubmitting || requiresTemporaryPasswordChange}
                 value={correo}
                 onChange={(e) => setCorreo(e.target.value)}
-                placeholder="eduard.leal@gmail.com"
+                placeholder="tucorreo@gmail.com"
                 className="w-full min-h-[46px] rounded-xl border border-[#E2E6EA] bg-[#F3F5F7] pl-10 pr-4 py-2.5 text-sm text-[#1E242B] placeholder-[#687380] transition-colors focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20 disabled:opacity-70"
               />
             </div>

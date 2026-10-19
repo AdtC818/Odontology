@@ -71,7 +71,7 @@ export class DeleteRoleUseCase {
     if (this.auditLogger) {
       await this.auditLogger.log({
         usuario: command.ejecutadoPorUsuario || 'ROL-ADM',
-        accion: 'RF-USR-011: Eliminar rol',
+        accion: 'Eliminar rol',
         registroAfectado: `rol:${command.idRol}`,
         valorAnterior: targetRole,
       });

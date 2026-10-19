@@ -44,7 +44,7 @@ export class UpdateRoleUseCase {
 
     if (duplicateNameRole) {
       throw new Error(
-        `El nombre de rol "${command.nombreRol.trim()}" ya está en uso por otro rol (RF-USR-010).`
+        `El nombre de rol "${command.nombreRol.trim()}" ya está en uso por otro rol.`
       );
     }
 
@@ -71,7 +71,7 @@ export class UpdateRoleUseCase {
     if (this.auditLogger) {
       await this.auditLogger.log({
         usuario: command.ejecutadoPorUsuario || 'ROL-ADM',
-        accion: 'RF-USR-010: Editar rol',
+        accion: 'Editar rol',
         registroAfectado: `rol:${command.idRol}`,
         valorAnterior: currentRole,
         valorNuevo: updatedRole,

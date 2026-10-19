@@ -71,12 +71,11 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
         });
         setInfoMessage(res.message);
       } else {
-        await fetch('/api/users-auth/password-recovery/request', {
+        await fetch('/api/v1/auth/recovery/request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ correo: correo.trim().toLowerCase() }),
         });
-        // Siempre se muestra el mismo mensaje para correos registrados o no (RF-USR-009 / RQNF-SEG-008)
         setInfoMessage(RecoverPasswordUseCase.GENERIC_RESPONSE_MESSAGE);
       }
     } catch {
@@ -92,7 +91,7 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
     setSuccessMessage(null);
 
     if (nuevaContrasena !== confirmacionContrasena) {
-      setErrorMessage('Las contraseñas ingresadas no coinciden (RF-USR-009).');
+      setErrorMessage('Las contraseñas ingresadas no coinciden.');
       return;
     }
 
@@ -102,7 +101,7 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
       !/\d/.test(nuevaContrasena)
     ) {
       setErrorMessage(
-        'La contraseña debe tener mínimo 8 caracteres con al menos una letra y un número (RF-USR-001).'
+        'La contraseña debe tener mínimo 8 caracteres con al menos una letra y un número.'
       );
       return;
     }
@@ -117,7 +116,7 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
         });
         setSuccessMessage(res.message);
       } else {
-        const response = await fetch('/api/users-auth/password-recovery/reset', {
+        const response = await fetch('/api/v1/auth/recovery/reset', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -213,7 +212,7 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
               </h1>
               <p className="mt-1.5 text-sm text-[#687380] leading-relaxed">
                 {isResetStep
-                  ? 'Ingrese dos veces su nueva contraseña. El enlace es de un solo uso y tiene vigencia de 30 minutos (RF-USR-009).'
+                  ? 'Ingrese dos veces su nueva contraseña. El enlace es de un solo uso y tiene vigencia de 30 minutos.'
                   : 'Ingrese el correo electrónico de su cuenta para recibir un enlace de restablecimiento de un solo uso.'}
               </p>
             </div>
@@ -291,7 +290,7 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
                       required
                       value={correo}
                       onChange={(e) => setCorreo(e.target.value)}
-                      placeholder="usuario@odontoleal.com"
+                      placeholder="correo@gmail.com"
                       className="w-full min-h-[46px] rounded-xl border border-[#E2E6EA] bg-[#F3F5F7] pl-10 pr-4 py-2.5 text-sm text-[#1E242B] placeholder-[#687380] transition-colors focus:border-[#D4AF37] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/20"
                     />
                   </div>
@@ -394,7 +393,7 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
           </div>
 
           <div className="flex items-center justify-center gap-2 border-t border-[#E2E6EA] bg-[#F8F9FA] px-4 py-3.5 text-[13px] font-medium text-[#687380]">
-            <span>🔒 Enlace de un solo uso válido por 30 minutos (RF-USR-009)</span>
+            <span>🔒 Enlace de un solo uso válido por 30 minutos</span>
           </div>
         </div>
       </main>

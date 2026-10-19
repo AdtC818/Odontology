@@ -43,7 +43,7 @@ export class ToggleUserStatusUseCase {
         const remainingAdmins = await this.countRemainingActiveAdmins(command.idUsuario);
         if (remainingAdmins === 0) {
           throw new Error(
-            'No se puede inactivar al único usuario activo con rol Administrador del sistema (ROL-ADM) (RF-USR-003).'
+            'No se puede inactivar al único usuario activo con rol Administrador del sistema (ROL-ADM).'
           );
         }
       }
@@ -56,7 +56,7 @@ export class ToggleUserStatusUseCase {
             .map((c) => `#${c.idCita} (${c.titulo} - ${c.estado})`)
             .join(', ');
           throw new Error(
-            `No se puede inactivar al profesional porque tiene ${activeAppointments.length} cita(s) pendiente(s) por atender: [${listadoCitas}] (RF-USR-003).`
+            `No se puede inactivar al profesional porque tiene ${activeAppointments.length} cita(s) pendiente(s) por atender: [${listadoCitas}].`
           );
         }
       }
@@ -78,7 +78,7 @@ export class ToggleUserStatusUseCase {
     if (this.auditLogger) {
       await this.auditLogger.log({
         usuario: command.ejecutadoPorUsuario || 'ROL-ADM',
-        accion: 'RF-USR-003: Gestionar estado usuario',
+        accion: 'Gestionar estado usuario',
         registroAfectado: `usuario:${command.idUsuario}`,
         valorAnterior: { estado: existingUser.estado },
         valorNuevo: { estado: updatedUser.estado },
