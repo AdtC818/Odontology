@@ -13,4 +13,13 @@ export const envConfig = {
     password: process.env.DB_PASSWORD,
     ssl: process.env.DB_SSL !== 'false', 
   },
+  mail: {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT) || 587,
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.EMAIL_FROM || '"Consultorio OdontoLeal" <notificaciones@odontoleal.com>',
+    secure: process.env.SMTP_SECURE === 'true',
+  },
+  frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
 };

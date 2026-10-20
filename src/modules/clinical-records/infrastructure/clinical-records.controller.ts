@@ -25,7 +25,7 @@ export class ClinicalRecordsController {
       const idEvolucion = Number(req.params.idEvolucion);
       const { payload } = req.body;
       const updated = await this.clinicalRepo.updateEvolutionEntrySameDay(idEvolucion, payload);
-      res.json({ message: 'Historia clínica actualizada dentro del plazo legal (RF-HCL-006).', data: updated });
+      res.json({ message: 'Historia clínica actualizada dentro del plazo legal.', data: updated });
     } catch (error: any) {
       res.status(403).json({ message: error.message });
     }

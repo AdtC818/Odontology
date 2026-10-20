@@ -36,7 +36,7 @@ export class ClinicalRecordRepository {
     if (rows.length === 0) throw new Error('Registro de evolución no encontrado.');
 
     if (!rows[0].esMismoDia) {
-      throw new Error('La historia clínica solo se puede editar el día en que fue creada (RQNF-FUN-001).');
+      throw new Error('La historia clínica solo se puede editar el día en que fue creada.');
     }
 
     const updateSql = `

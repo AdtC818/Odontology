@@ -16,7 +16,7 @@ export class ClinicalDocumentRepository {
       throw new Error('El paciente o su historia clínica no existen.');
     }
     if (!patientRes.rows[0].sexo) {
-      throw new Error('No se puede generar el documento clínico: el paciente tiene "Datos incompletos" (RF-DOC-001).');
+      throw new Error('No se puede generar el documento clínico: el paciente tiene "Datos incompletos".');
     }
 
     const jsonPayload = {
