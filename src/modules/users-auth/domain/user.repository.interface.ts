@@ -149,7 +149,7 @@ export interface IMailerPort {
     nombreCompleto: string;
     recoveryLink: string;
     expiresInMinutes: number;
-  }): Promise<void>;
+  }): Promise<{ messageId?: string; previewUrl?: string | null } | void>;
 }
 
 export interface IAuditLoggerPort {

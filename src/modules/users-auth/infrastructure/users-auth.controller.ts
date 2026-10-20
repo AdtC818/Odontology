@@ -268,9 +268,10 @@ export class UsersAuthController {
   requestPasswordRecovery = async (req: Request, res: Response): Promise<void> => {
     try {
       const { correo, baseRecoveryUrl } = req.body;
+      const origin = req.protocol + "://" + req.get("host");
       const result = await this.recoverPasswordUseCase.requestRecoveryLink({
         correo,
-        baseRecoveryUrl: baseRecoveryUrl || envConfig.frontendUrl,
+        baseRecoveryUrl: baseRecoveryUrl || envConfig.frontendUrl || origin,
       });
       res.json(result);
     } catch (error: any) {

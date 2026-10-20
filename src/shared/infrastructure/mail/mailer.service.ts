@@ -26,24 +26,42 @@ export class MailerService implements IMailerPort {
 
   /**
    * Obtiene o inicializa el transporter de correo.
-   * Si se definen credenciales SMTP en el entorno (Gmail, Brevo, Outlook, etc.), se utiliza dicho servicio.
-   * Si no hay credenciales configuradas en desarrollo, se crea una cuenta gratuita de prueba en Ethereal Email.
+   * 1. Soporta Gmail directo con App Password (GMAIL_USER + GMAIL_PASS).
+   * 2. Soporta SMTP estándar (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) como Brevo, Resend, etc.
+   * 3. Fallback automático a Ethereal Email (sandbox gratuito de pruebas con visualización web).
    */
   private async getTransporter(): Promise<Transporter> {
     if (this.transporter) {
       return this.transporter;
     }
 
+    // 1. Detección directa de Gmail
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = (process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '');
+
+    if (gmailUser && gmailPass) {
+      this.transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: gmailUser,
+          pass: gmailPass,
+        },
+      });
+      console.log(`📧 Servicio de correo inicializado con Gmail (${gmailUser})`);
+      return this.transporter;
+    }
+
+    // 2. Detección de SMTP estándar (Brevo, Resend, Outlook, etc.)
     const host = this.options?.host || process.env.SMTP_HOST;
     const port = this.options?.port || Number(process.env.SMTP_PORT) || 587;
-    const user = this.options?.user || process.env.SMTP_USER || process.env.GMAIL_USER;
-    const pass = this.options?.pass || process.env.SMTP_PASS || process.env.GMAIL_PASS;
+    const user = this.options?.user || process.env.SMTP_USER;
+    const rawPass = this.options?.pass || process.env.SMTP_PASS;
+    const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
     const secure =
       this.options?.secure ??
       (process.env.SMTP_SECURE === 'true' || port === 465);
 
     if (host && user && pass) {
-      // Servicio SMTP configurado por el usuario (ej. Gmail, Brevo, etc.)
       this.transporter = nodemailer.createTransport({
         host,
         port,
@@ -54,9 +72,9 @@ export class MailerService implements IMailerPort {
       return this.transporter;
     }
 
-    // Servicio gratuito de pruebas Ethereal Email (Nodemailer test account)
+    // 3. Fallback a servicio gratuito de pruebas Ethereal Email (Nodemailer test sandbox)
     try {
-      console.log('📧 No se detectaron credenciales SMTP personalizadas. Conectando al servicio gratuito Ethereal Email...');
+      console.log('📧 No se detectaron credenciales SMTP reales. Generando buzón de pruebas Ethereal Email...');
       const testAccount = await nodemailer.createTestAccount();
       this.transporter = nodemailer.createTransport({
         host: 'smtp.ethereal.email',
@@ -67,11 +85,10 @@ export class MailerService implements IMailerPort {
           pass: testAccount.pass,
         },
       });
-      console.log(`✅ Cuenta de prueba Ethereal generada con éxito: ${testAccount.user}`);
+      console.log(`✅ Buzón Ethereal listo: ${testAccount.user}`);
       return this.transporter;
     } catch (etherealError: any) {
-      console.warn('⚠️ No fue posible crear cuenta en Ethereal, usando fallback de transporte simulado:', etherealError?.message);
-      // Fallback a transport json si falla la conexión externa
+      console.warn('⚠️ No fue posible conectar con Ethereal, usando fallback jsonTransport:', etherealError?.message);
       this.transporter = nodemailer.createTransport({
         jsonTransport: true,
       });
@@ -87,7 +104,7 @@ export class MailerService implements IMailerPort {
     nombreCompleto: string;
     recoveryLink: string;
     expiresInMinutes: number;
-  }): Promise<void> {
+  }): Promise<{ messageId?: string; previewUrl?: string | null }> {
     const { to, nombreCompleto, recoveryLink, expiresInMinutes } = params;
 
     const htmlContent = `
@@ -152,19 +169,30 @@ export class MailerService implements IMailerPort {
         html: htmlContent,
       });
 
-      console.log(`\n======================================================`);
-      console.log(`📨 CORREO DE RECUPERACIÓN ENVIADO CON ÉXITO`);
-      console.log(`Destinatario: ${to}`);
-      console.log(`Enlace de recuperación: ${recoveryLink}`);
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
 
-      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`\n======================================================`);
+      console.log(`📨 CORREO DE RECUPERACIÓN PROCESADO`);
+      console.log(`Destinatario: ${to}`);
+      console.log(`Enlace generado: ${recoveryLink}`);
+
       if (previewUrl) {
         console.log(`🔗 Vista previa online (Ethereal Email Free): ${previewUrl}`);
+      } else {
+        console.log(`✅ Correo entregado al servidor SMTP para envío a bandeja real.`);
       }
       console.log(`======================================================\n`);
+
+      return {
+        messageId: info.messageId,
+        previewUrl,
+      };
     } catch (err: any) {
       console.error('❌ Error al enviar correo de recuperación:', err?.message);
       console.log(`ℹ️ Enlace de recuperación generado para contingencia: ${recoveryLink}`);
+      return {
+        previewUrl: null,
+      };
     }
   }
 }
