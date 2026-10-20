@@ -18,8 +18,13 @@ export interface CreateSolicitudCitaDTO {
   nombreSolicitante: string;
   documentoSolicitante: string;
   correoSolicitante: string;
+  telefonoSolicitante?: string;
+  fechaNacimiento?: string;
   bloqueSolicitado: string; 
   descripcion?: string;
+  idProfesional?: number;
+  servicio?: string;
+  autorizacionDatos?: boolean;
 }
 
 export interface CreateCitaDTO {

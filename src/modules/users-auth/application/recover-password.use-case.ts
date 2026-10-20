@@ -24,7 +24,6 @@ export interface ResetPasswordWithTokenCommand {
 
 export interface RecoverPasswordResult {
   message: string;
-  debugRecoveryLink?: string;
 }
 
 export class RecoverPasswordUseCase {
@@ -80,13 +79,17 @@ export class RecoverPasswordUseCase {
         ? `${cleanBase}&token=${rawToken}`
         : `${cleanBase}/?token=${rawToken}`;
 
+      let previewUrl: string | null = null;
       if (this.mailer) {
-        await this.mailer.sendPasswordRecoveryEmail({
+        const mailRes = await this.mailer.sendPasswordRecoveryEmail({
           to: user.correo,
           nombreCompleto: user.nombreCompleto,
           recoveryLink,
           expiresInMinutes: OneTimeTokenVO.EXPIRATION_MINUTES,
         });
+        if (mailRes && typeof mailRes === 'object' && 'previewUrl' in mailRes) {
+          previewUrl = mailRes.previewUrl ?? null;
+        }
       }
 
       if (this.auditLogger) {
@@ -99,7 +102,6 @@ export class RecoverPasswordUseCase {
 
       return {
         message: RecoverPasswordUseCase.GENERIC_RESPONSE_MESSAGE,
-        debugRecoveryLink: recoveryLink,
       };
     }
 

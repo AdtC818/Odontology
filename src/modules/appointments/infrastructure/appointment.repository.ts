@@ -31,23 +31,134 @@ export class AppointmentRepository {
     }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const { rows } = await db.query<TimeSlotRow>(
-      `SELECT inicio, final, estado, ocupacion FROM public.bloques_horario ${where} ORDER BY inicio ASC;`,
+      `SELECT inicio::text as inicio, final::text as final, estado, ocupacion FROM public.bloques_horario ${where} ORDER BY inicio ASC;`,
       params
     );
+
+    // Si se consulta un día en específico (desde y hasta corresponden a la misma fecha),
+    // completamos con los bloques estándar de la jornada clínica para que el portal público
+    // y la agenda siempre visualicen los bloques con su estado real de disponibilidad
+    if (desde && hasta && desde.slice(0, 10) === hasta.slice(0, 10)) {
+      const dateStr = desde.slice(0, 10);
+      const DEFAULT_HOURS = [
+        '08:00:00', '08:30:00', '09:00:00', '09:30:00',
+        '10:00:00', '10:30:00', '11:00:00', '11:30:00',
+        '14:00:00', '14:30:00', '15:00:00', '15:30:00',
+        '16:00:00', '16:30:00',
+      ];
+      const rowsMap = new Map<string, TimeSlotRow>();
+      for (const r of rows) {
+        const timePart = r.inicio.split(' ')[1];
+        if (timePart) rowsMap.set(timePart, r);
+      }
+
+      return DEFAULT_HOURS.map((hour) => {
+        const existing = rowsMap.get(hour);
+        if (existing) return existing;
+
+        const [h, m] = hour.split(':').map(Number);
+        const nextMin = (m + 30) % 60;
+        const nextHour = m + 30 >= 60 ? h + 1 : h;
+        const endHourStr = `${String(nextHour).padStart(2, '0')}:${String(nextMin).padStart(2, '0')}:00`;
+
+        return {
+          inicio: `${dateStr} ${hour}`,
+          final: `${dateStr} ${endHourStr}`,
+          estado: true,
+          ocupacion: false,
+        };
+      });
+    }
+
     return rows;
   }
 
   // RF-AGE-003: Solicitar cita desde sección pública y reservar bloque (Regla de Negocio 1)
   async createPublicRequest(dto: CreateSolicitudCitaDTO) {
     return db.withTransaction(async (client) => {
-      const slotRes = await client.query<TimeSlotRow>(
-        `SELECT inicio, estado, ocupacion FROM public.bloques_horario WHERE inicio = $1 FOR UPDATE;`,
-        [dto.bloqueSolicitado]
-      );
-      if (slotRes.rows.length === 0 || !slotRes.rows[0].estado || slotRes.rows[0].ocupacion) {
-        throw new Error('El bloque horario seleccionado no existe o ya se encuentra ocupado.');
+      // Validar Autorización de Datos (RQNF-SEG-005, RF-AGE-003)
+      if (dto.autorizacionDatos === false) {
+        throw new Error('Debe aceptar la autorización de tratamiento de datos personales para continuar (RQNF-SEG-005).');
       }
 
+      // Validar Regla de Negocio 2: Ventana de solicitud de 5 a 60 días calendario
+      const now = new Date();
+      const requestedDate = new Date(dto.bloqueSolicitado.replace(' ', 'T'));
+      const diffMs = requestedDate.getTime() - now.getTime();
+      const diffDays = diffMs / (1000 * 60 * 60 * 24);
+      if (diffDays < 4.8 || diffDays > 60.2) {
+        throw new Error('Solo se aceptan solicitudes de citas para fechas entre 5 y 60 días calendario a partir de hoy (Regla de Negocio 2).');
+      }
+
+      // Validar RF-AGE-003: Un documento no puede tener más de una cita Solicitada en trámite
+      const pendingSolRes = await client.query(
+        `SELECT id_solicitud FROM public.solicitud_cita 
+         WHERE documento_solicitante = $1 AND estado = TRUE;`,
+        [dto.documentoSolicitante.trim()]
+      );
+      if (pendingSolRes.rows.length > 0) {
+        throw new Error(
+          `El documento ${dto.documentoSolicitante.trim()} ya tiene una cita Solicitada en proceso de aprobación (RF-AGE-003). Por favor espere su confirmación o comuníquese con el consultorio si necesita modificarla.`
+        );
+      }
+
+      // 1. Asegurar que el bloque horario existe en la base de datos
+      const startDate = new Date(dto.bloqueSolicitado);
+      const endDate = new Date(startDate.getTime() + 30 * 60 * 1000);
+      const startStr = dto.bloqueSolicitado;
+      const endStr = `${endDate.getFullYear()}-${(endDate.getMonth() + 1).toString().padStart(2, '0')}-${endDate.getDate().toString().padStart(2, '0')} ${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}:00`;
+
+      await client.query(
+        `INSERT INTO public.bloques_horario (inicio, final, estado, ocupacion)
+         VALUES ($1, $2, TRUE, FALSE)
+         ON CONFLICT (inicio) DO NOTHING;`,
+        [startStr, endStr]
+      );
+
+      const slotRes = await client.query<TimeSlotRow>(
+        `SELECT inicio::text as inicio, final::text as final, estado, ocupacion FROM public.bloques_horario WHERE inicio = $1 FOR UPDATE;`,
+        [startStr]
+      );
+      if (slotRes.rows.length === 0 || !slotRes.rows[0].estado || slotRes.rows[0].ocupacion) {
+        throw new Error(`El horario seleccionado ya no se encuentra disponible o fue reservado por otro paciente. Por favor seleccione otro horario disponible.`);
+      }
+
+      // 2. Regla de Negocio: Si el documento ya existe en la BD, no volver a crear el paciente, usar el existente
+      const existingPatientRes = await client.query(
+        `SELECT id_paciente, nombre_completo, correo, telefono FROM public.paciente WHERE documento_identidad = $1;`,
+        [dto.documentoSolicitante.trim()]
+      );
+
+      let idPaciente: number;
+      let esPacienteNuevo = false;
+
+      if (existingPatientRes.rows.length > 0) {
+        idPaciente = existingPatientRes.rows[0].id_paciente;
+      } else {
+        esPacienteNuevo = true;
+        const insertPatientRes = await client.query(
+          `INSERT INTO public.paciente 
+             (nombre_completo, documento_identidad, correo, telefono, fecha_nacimiento, sexo)
+           VALUES ($1, $2, $3, $4, $5, 'Otro')
+           RETURNING id_paciente;`,
+          [
+            dto.nombreSolicitante.trim(),
+            dto.documentoSolicitante.trim(),
+            dto.correoSolicitante.trim(),
+            dto.telefonoSolicitante?.trim() || null,
+            dto.fechaNacimiento || '2000-01-01',
+          ]
+        );
+        idPaciente = insertPatientRes.rows[0].id_paciente;
+
+        // Crear historia clínica inicial vacía (RF-HCL-001)
+        await client.query(
+          `INSERT INTO public.historia_clinica (id_paciente) VALUES ($1) ON CONFLICT (id_paciente) DO NOTHING;`,
+          [idPaciente]
+        );
+      }
+
+      // 3. Registrar en public.solicitud_cita
       const insertSolSql = `
         INSERT INTO public.solicitud_cita 
           (nombre_solicitante, documento_solicitante, correo_solicitante, bloque_solicitado, descripcion, estado)
@@ -58,15 +169,48 @@ export class AppointmentRepository {
         dto.nombreSolicitante,
         dto.documentoSolicitante,
         dto.correoSolicitante,
-        dto.bloqueSolicitado,
-        dto.descripcion || null,
+        startStr,
+        dto.descripcion || 'Solicitud de valoración odontológica',
       ]);
+      const solicitud = solRes.rows[0];
 
+      // 4. Crear la cita en public.cita en estado 'Solicitada'
+      const idDoctor = dto.idProfesional || 1;
+      const insertCitaSql = `
+        INSERT INTO public.cita (titulo, descripcion, id_paciente, id_usuario, estado)
+        VALUES ($1, $2, $3, $4, 'Solicitada')
+        RETURNING *;
+      `;
+      const citaRes = await client.query(insertCitaSql, [
+        dto.descripcion || 'Valoración Odontológica Web',
+        `Solicitud externa de cita por ${dto.nombreSolicitante}`,
+        idPaciente,
+        idDoctor,
+      ]);
+      const nuevaCita = citaRes.rows[0];
+
+      // 5. Vincular a bloques_citas y marcar bloque como ocupado
+      await client.query(
+        `INSERT INTO public.bloques_citas (id_bloque, id_cita) VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+        [startStr, nuevaCita.id_cita]
+      );
       await client.query(`UPDATE public.bloques_horario SET ocupacion = TRUE WHERE inicio = $1;`, [
-        dto.bloqueSolicitado,
+        startStr,
       ]);
 
-      return solRes.rows[0];
+      // 6. Registrar en auditoría historial_cita
+      await client.query(
+        `INSERT INTO public.historial_cita (id_cita, id_usuario_gestor, reporte, motivo)
+         VALUES ($1, 1, 'Cita creada en estado Solicitada desde portal web público', 'Solicitud externa');`,
+        [nuevaCita.id_cita]
+      );
+
+      return {
+        solicitud,
+        cita: nuevaCita,
+        idPaciente,
+        esPacienteNuevo,
+      };
     });
   }
 
@@ -105,37 +249,51 @@ export class AppointmentRepository {
         await client.query(`UPDATE public.bloques_horario SET ocupacion = FALSE WHERE inicio = $1;`, [
           solicitud.bloque_solicitado,
         ]);
-        return { estado: 'Rechazada', solicitudId: params.idSolicitud };
+        await client.query(
+          `UPDATE public.cita SET estado = 'Rechazada' WHERE id_cita IN (SELECT id_cita FROM public.bloques_citas WHERE id_bloque = $1);`,
+          [solicitud.bloque_solicitado]
+        );
+        return { estado: 'Rechazada', solicitudId: params.idSolicitud, correo: solicitud.correo_solicitante };
       }
 
-      if (!params.idPaciente || !params.idProfesional) {
-        throw new Error('Para confirmar la solicitud se requiere idPaciente e idProfesional.');
-      }
-
-      const citaRes = await client.query(
-        `INSERT INTO public.cita (titulo, descripcion, id_paciente, id_usuario, estado)
-         VALUES ($1, $2, $3, $4, 'Confirmada') RETURNING *;`,
-        [
-          'Cita desde solicitud web',
-          solicitud.descripcion,
-          params.idPaciente,
-          params.idProfesional,
-        ]
+      // Si fue aprobada, actualizar la cita correspondiente a 'Confirmada'
+      const updateCitaRes = await client.query(
+        `UPDATE public.cita 
+         SET estado = 'Confirmada' 
+         WHERE id_cita IN (SELECT id_cita FROM public.bloques_citas WHERE id_bloque = $1)
+         RETURNING *;`,
+        [solicitud.bloque_solicitado]
       );
-      const nuevaCita = citaRes.rows[0];
 
-      await client.query(`INSERT INTO public.bloques_citas (id_bloque, id_cita) VALUES ($1, $2);`, [
-        solicitud.bloque_solicitado,
-        nuevaCita.id_cita,
-      ]);
+      let cita = updateCitaRes.rows[0];
+
+      if (!cita) {
+        const idPac = params.idPaciente || 1;
+        const idProf = params.idProfesional || 1;
+        const insertCitaRes = await client.query(
+          `INSERT INTO public.cita (titulo, descripcion, id_paciente, id_usuario, estado)
+           VALUES ($1, $2, $3, $4, 'Confirmada') RETURNING *;`,
+          ['Cita desde solicitud web', solicitud.descripcion, idPac, idProf]
+        );
+        cita = insertCitaRes.rows[0];
+        await client.query(`INSERT INTO public.bloques_citas (id_bloque, id_cita) VALUES ($1, $2) ON CONFLICT DO NOTHING;`, [
+          solicitud.bloque_solicitado,
+          cita.id_cita,
+        ]);
+      }
 
       await client.query(
         `INSERT INTO public.historial_cita (id_cita, id_usuario_gestor, reporte, motivo)
-         VALUES ($1, $2, 'Agendado por confirmación de solicitud', $3);`,
-        [nuevaCita.id_cita, params.idUsuarioGestor, params.motivo]
+         VALUES ($1, $2, 'Cita Confirmada por gestión de solicitud', $3);`,
+        [cita.id_cita, params.idUsuarioGestor, params.motivo]
       );
 
-      return nuevaCita;
+      return {
+        ...cita,
+        correoPaciente: solicitud.correo_solicitante,
+        nombrePaciente: solicitud.nombre_solicitante,
+        fechaHora: solicitud.bloque_solicitado,
+      };
     });
   }
 
@@ -235,9 +393,18 @@ export class AppointmentRepository {
   }
 
   // RF-AGE-008: Consultar agenda con paciente, bloques e historial
-  async getAgenda(idProfesional?: number) {
+  async getAgenda(idProfesional?: number, idPaciente?: number) {
+    const conditions: string[] = [];
     const params: any[] = [];
-    const where = idProfesional ? (params.push(idProfesional), `WHERE c.id_usuario = $1`) : '';
+    if (idProfesional) {
+      params.push(idProfesional);
+      conditions.push(`c.id_usuario = $${params.length}`);
+    }
+    if (idPaciente) {
+      params.push(idPaciente);
+      conditions.push(`c.id_paciente = $${params.length}`);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
     const sql = `
       SELECT 

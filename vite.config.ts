@@ -5,10 +5,14 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const backendPort = env.PORT || '3000';
+  const backendPort = env.PORT || '4000';
 
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      outDir: 'dist/public',
+      emptyOutDir: true,
+    },
     server: {
       port: 5173,
       proxy: {

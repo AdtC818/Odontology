@@ -15,6 +15,7 @@ import { ClinicalRecordRepository } from '../../modules/clinical-records/infrast
 import { ClinicalRecordsController } from '../../modules/clinical-records/infrastructure/clinical-records.controller';
 
 import { ConsentRepository } from '../../modules/consents/infrastructure/consent.repository';
+import { ConsentService } from '../../modules/consents/application/consent.service';
 import { ConsentsController } from '../../modules/consents/infrastructure/consents.controller';
 
 import { ClinicalDocumentRepository } from '../../modules/clinical-documents/infrastructure/clinical-document.repository';
@@ -26,7 +27,7 @@ const usersController = new UsersAuthController(new UserRepository());
 const appointmentsController = new AppointmentsController(new AppointmentRepository());
 const patientsController = new PatientsController(new PatientRepository());
 const clinicalRecordsController = new ClinicalRecordsController(new ClinicalRecordRepository());
-const consentsController = new ConsentsController(new ConsentRepository());
+const consentsController = new ConsentsController(new ConsentService(new ConsentRepository()));
 const clinicalDocumentsController = new ClinicalDocumentsController(new ClinicalDocumentRepository());
 
 // 0. Healthcheck de conexión a Heroku Postgres (RQNF-FIA-001)

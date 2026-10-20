@@ -26,24 +26,42 @@ export class MailerService implements IMailerPort {
 
   /**
    * Obtiene o inicializa el transporter de correo.
-   * Si se definen credenciales SMTP en el entorno (Gmail, Brevo, Outlook, etc.), se utiliza dicho servicio.
-   * Si no hay credenciales configuradas en desarrollo, se crea una cuenta gratuita de prueba en Ethereal Email.
+   * 1. Soporta Gmail directo con App Password (GMAIL_USER + GMAIL_PASS).
+   * 2. Soporta SMTP estándar (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS) como Brevo, Resend, etc.
+   * 3. Fallback automático a Ethereal Email (sandbox gratuito de pruebas con visualización web).
    */
   private async getTransporter(): Promise<Transporter> {
     if (this.transporter) {
       return this.transporter;
     }
 
+    // 1. Detección directa de Gmail
+    const gmailUser = process.env.GMAIL_USER;
+    const gmailPass = (process.env.GMAIL_PASS || process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '');
+
+    if (gmailUser && gmailPass) {
+      this.transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: gmailUser,
+          pass: gmailPass,
+        },
+      });
+      console.log(`📧 Servicio de correo inicializado con Gmail (${gmailUser})`);
+      return this.transporter;
+    }
+
+    // 2. Detección de SMTP estándar (Brevo, Resend, Outlook, etc.)
     const host = this.options?.host || process.env.SMTP_HOST;
     const port = this.options?.port || Number(process.env.SMTP_PORT) || 587;
-    const user = this.options?.user || process.env.SMTP_USER || process.env.GMAIL_USER;
-    const pass = this.options?.pass || process.env.SMTP_PASS || process.env.GMAIL_PASS;
+    const user = this.options?.user || process.env.SMTP_USER;
+    const rawPass = this.options?.pass || process.env.SMTP_PASS;
+    const pass = rawPass ? rawPass.replace(/\s+/g, '') : '';
     const secure =
       this.options?.secure ??
       (process.env.SMTP_SECURE === 'true' || port === 465);
 
     if (host && user && pass) {
-      // Servicio SMTP configurado por el usuario (ej. Gmail, Brevo, etc.)
       this.transporter = nodemailer.createTransport({
         host,
         port,
@@ -54,9 +72,9 @@ export class MailerService implements IMailerPort {
       return this.transporter;
     }
 
-    // Servicio gratuito de pruebas Ethereal Email (Nodemailer test account)
+    // 3. Fallback a servicio gratuito de pruebas Ethereal Email (Nodemailer test sandbox)
     try {
-      console.log('📧 No se detectaron credenciales SMTP personalizadas. Conectando al servicio gratuito Ethereal Email...');
+      console.log('📧 No se detectaron credenciales SMTP reales. Generando buzón de pruebas Ethereal Email...');
       const testAccount = await nodemailer.createTestAccount();
       this.transporter = nodemailer.createTransport({
         host: 'smtp.ethereal.email',
@@ -67,11 +85,10 @@ export class MailerService implements IMailerPort {
           pass: testAccount.pass,
         },
       });
-      console.log(`✅ Cuenta de prueba Ethereal generada con éxito: ${testAccount.user}`);
+      console.log(`✅ Buzón Ethereal listo: ${testAccount.user}`);
       return this.transporter;
     } catch (etherealError: any) {
-      console.warn('⚠️ No fue posible crear cuenta en Ethereal, usando fallback de transporte simulado:', etherealError?.message);
-      // Fallback a transport json si falla la conexión externa
+      console.warn('⚠️ No fue posible conectar con Ethereal, usando fallback jsonTransport:', etherealError?.message);
       this.transporter = nodemailer.createTransport({
         jsonTransport: true,
       });
@@ -87,7 +104,7 @@ export class MailerService implements IMailerPort {
     nombreCompleto: string;
     recoveryLink: string;
     expiresInMinutes: number;
-  }): Promise<void> {
+  }): Promise<{ messageId?: string; previewUrl?: string | null }> {
     const { to, nombreCompleto, recoveryLink, expiresInMinutes } = params;
 
     const htmlContent = `
@@ -152,19 +169,281 @@ export class MailerService implements IMailerPort {
         html: htmlContent,
       });
 
-      console.log(`\n======================================================`);
-      console.log(`📨 CORREO DE RECUPERACIÓN ENVIADO CON ÉXITO`);
-      console.log(`Destinatario: ${to}`);
-      console.log(`Enlace de recuperación: ${recoveryLink}`);
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
 
-      const previewUrl = nodemailer.getTestMessageUrl(info);
+      console.log(`\n======================================================`);
+      console.log(`📨 CORREO DE RECUPERACIÓN PROCESADO`);
+      console.log(`Destinatario: ${to}`);
+      console.log(`Enlace generado: ${recoveryLink}`);
+
       if (previewUrl) {
         console.log(`🔗 Vista previa online (Ethereal Email Free): ${previewUrl}`);
+      } else {
+        console.log(`✅ Correo entregado al servidor SMTP para envío a bandeja real.`);
       }
       console.log(`======================================================\n`);
+
+      return {
+        messageId: info.messageId,
+        previewUrl,
+      };
     } catch (err: any) {
       console.error('❌ Error al enviar correo de recuperación:', err?.message);
       console.log(`ℹ️ Enlace de recuperación generado para contingencia: ${recoveryLink}`);
+      return {
+        previewUrl: null,
+      };
+    }
+  }
+
+  /**
+   * Envía confirmación de cita agendada por correo electrónico al paciente.
+   */
+  async sendAppointmentConfirmationEmail(params: {
+    to: string;
+    nombrePaciente: string;
+    fecha: string;
+    hora: string;
+    doctor: string;
+    motivo: string;
+    idCita?: number;
+  }): Promise<{ messageId?: string; previewUrl?: string | null }> {
+    const { to, nombrePaciente, fecha, hora, doctor, motivo, idCita } = params;
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Confirmación de Cita - OdontoLeal</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #F8F9FA; margin: 0; padding: 24px; color: #1E242B; }
+    .card { max-width: 540px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E6EA; border-top: 5px solid #D4AF37; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .logo-badge { display: inline-block; background-color: #111111; color: #D4AF37; font-size: 12px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 14px; border-radius: 999px; }
+    h1 { font-size: 22px; font-weight: 800; color: #1E242B; margin: 16px 0 8px 0; }
+    .details { background-color: #FBF6E6; border: 1px solid #EAD89B; border-radius: 12px; padding: 18px; margin: 20px 0; }
+    .detail-item { margin: 8px 0; font-size: 14px; }
+    .label { font-weight: bold; color: #687380; }
+    .value { font-weight: 600; color: #1E242B; }
+    .alert-box { background-color: #EEF7FF; border-left: 4px solid #3B82F6; padding: 12px; border-radius: 8px; margin: 16px 0; font-size: 13px; color: #1E40AF; }
+    .footer { text-align: center; font-size: 12px; color: #8F99A3; margin-top: 24px; border-top: 1px solid #E2E6EA; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align: center;">
+      <span class="logo-badge">CONSULTORIO ODONTOLEAL</span>
+      <h1>¡Tu cita ha sido confirmada!</h1>
+      <p style="color: #687380; font-size: 14px;">Hemos reservado tu espacio en nuestra agenda médica.</p>
+    </div>
+
+    <p>Estimado(a) <strong>${nombrePaciente}</strong>,</p>
+    <p>Le informamos que su cita odontológica ha sido programada con éxito con los siguientes datos:</p>
+
+    <div class="details">
+      <div class="detail-item"><span class="label">📅 Fecha:</span> <span class="value">${fecha}</span></div>
+      <div class="detail-item"><span class="label">⏰ Hora:</span> <span class="value">${hora}</span></div>
+      <div class="detail-item"><span class="label">👨‍⚕️ Profesional:</span> <span class="value">${doctor}</span></div>
+      <div class="detail-item"><span class="label">📋 Motivo / Tratamiento:</span> <span class="value">${motivo}</span></div>
+      ${idCita ? `<div class="detail-item"><span class="label">🔢 Cita N°:</span> <span class="value">#${idCita}</span></div>` : ''}
+    </div>
+
+    <div class="alert-box">
+      📍 <strong>Ubicación:</strong> Calle 127 # 14-54, Edificio Medical Prestige, Suite 402, Bogotá.<br>
+      ⏰ <em>Por favor presentarse con 10 minutos de anticipación.</em>
+    </div>
+
+    <p style="font-size: 13px; color: #687380;">Para cancelar o reprogramar, por favor comuníquese con al menos 24 horas de antelación al WhatsApp <strong>+57 300 123 4567</strong> o respondiendo a este correo.</p>
+
+    <div class="footer">
+      © 2026 Consultorio Odontológico Dr. Eduar Leal Álvarez • Bogotá, Colombia
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    try {
+      const transporter = await this.getTransporter();
+      const info = await transporter.sendMail({
+        from: this.fromAddress,
+        to,
+        subject: `Confirmación de Cita Odontológica - ${fecha} a las ${hora}`,
+        text: `Hola ${nombrePaciente}.\n\nTu cita en OdontoLeal ha sido confirmada para el día ${fecha} a las ${hora} con ${doctor}.\nMotivo: ${motivo}.\nDirección: Calle 127 # 14-54, Suite 402, Bogotá.`,
+        html: htmlContent,
+      });
+
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+      console.log(`📧 Confirmación de cita enviada a ${to}. Mensaje ID: ${info.messageId}`);
+      return { messageId: info.messageId, previewUrl };
+    } catch (err: any) {
+      console.error('❌ Error enviando correo de confirmación de cita:', err?.message);
+      return { previewUrl: null };
+    }
+  }
+
+  /**
+   * Envía recordatorio de cita (24 horas antes) por correo electrónico.
+   */
+  async sendAppointmentReminderEmail(params: {
+    to: string;
+    nombrePaciente: string;
+    fecha: string;
+    hora: string;
+    doctor: string;
+  }): Promise<{ messageId?: string; previewUrl?: string | null }> {
+    const { to, nombrePaciente, fecha, hora, doctor } = params;
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Recordatorio de Cita - OdontoLeal</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #F8F9FA; margin: 0; padding: 24px; color: #1E242B; }
+    .card { max-width: 540px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E6EA; border-top: 5px solid #D4AF37; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .logo-badge { display: inline-block; background-color: #111111; color: #D4AF37; font-size: 12px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 14px; border-radius: 999px; }
+    h1 { font-size: 22px; font-weight: 800; color: #1E242B; margin: 16px 0 8px 0; }
+    .details { background-color: #FBF6E6; border: 1px solid #EAD89B; border-radius: 12px; padding: 18px; margin: 20px 0; }
+    .detail-item { margin: 8px 0; font-size: 14px; }
+    .label { font-weight: bold; color: #687380; }
+    .value { font-weight: 600; color: #1E242B; }
+    .footer { text-align: center; font-size: 12px; color: #8F99A3; margin-top: 24px; border-top: 1px solid #E2E6EA; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align: center;">
+      <span class="logo-badge">CONSULTORIO ODONTOLEAL</span>
+      <h1>Recordatorio de tu Cita Odontológica</h1>
+      <p style="color: #687380; font-size: 14px;">Te esperamos mañana en nuestro consultorio.</p>
+    </div>
+
+    <p>Hola <strong>${nombrePaciente}</strong>,</p>
+    <p>Te recordamos que tienes una cita programada para el día de mañana:</p>
+
+    <div class="details">
+      <div class="detail-item"><span class="label">📅 Fecha:</span> <span class="value">${fecha}</span></div>
+      <div class="detail-item"><span class="label">⏰ Hora:</span> <span class="value">${hora}</span></div>
+      <div class="detail-item"><span class="label">👨‍⚕️ Profesional:</span> <span class="value">${doctor}</span></div>
+      <div class="detail-item"><span class="label">📍 Consultorio:</span> <span class="value">Calle 127 # 14-54, Suite 402, Bogotá</span></div>
+    </div>
+
+    <p style="font-size: 13px; color: #687380;">Agradecemos confirmar tu asistencia respondiendo a este mensaje o avisarnos oportunamente en caso de requerir reprogramar.</p>
+
+    <div class="footer">
+      © 2026 Consultorio Odontológico Dr. Eduar Leal Álvarez • Bogotá, Colombia
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    try {
+      const transporter = await this.getTransporter();
+      const info = await transporter.sendMail({
+        from: this.fromAddress,
+        to,
+        subject: `Recordatorio de Cita Odontológica: Mañana ${fecha} a las ${hora}`,
+        text: `Hola ${nombrePaciente}.\n\nTe recordamos tu cita mañana ${fecha} a las ${hora} con ${doctor} en el Consultorio OdontoLeal (Calle 127 # 14-54, Suite 402, Bogotá).`,
+        html: htmlContent,
+      });
+
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+      console.log(`📧 Recordatorio de cita enviado a ${to}. Mensaje ID: ${info.messageId}`);
+      return { messageId: info.messageId, previewUrl };
+    } catch (err: any) {
+      console.error('❌ Error enviando recordatorio de cita:', err?.message);
+      return { previewUrl: null };
+    }
+  }
+
+  /**
+   * Envía confirmación de solicitud pública de cita recibida (sujeta a confirmación) (RF-AGE-003).
+   */
+  async sendPublicRequestReceivedEmail(params: {
+    to: string;
+    nombreSolicitante: string;
+    fecha: string;
+    hora: string;
+    doctor: string;
+    motivo: string;
+    idSolicitud?: number;
+  }): Promise<{ messageId?: string; previewUrl?: string | null }> {
+    const { to, nombreSolicitante, fecha, hora, doctor, motivo, idSolicitud } = params;
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Solicitud de Cita Recibida - OdontoLeal</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #F8F9FA; margin: 0; padding: 24px; color: #1E242B; }
+    .card { max-width: 540px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E6EA; border-top: 5px solid #D4AF37; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .logo-badge { display: inline-block; background-color: #111111; color: #D4AF37; font-size: 12px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 14px; border-radius: 999px; }
+    h1 { font-size: 22px; font-weight: 800; color: #1E242B; margin: 16px 0 8px 0; }
+    .details { background-color: #FBF6E6; border: 1px solid #EAD89B; border-radius: 12px; padding: 18px; margin: 20px 0; }
+    .detail-item { margin: 8px 0; font-size: 14px; }
+    .label { font-weight: bold; color: #687380; }
+    .value { font-weight: 600; color: #1E242B; }
+    .alert-box { background-color: #FEF3C7; border-left: 4px solid #D97706; padding: 12px; border-radius: 8px; margin: 16px 0; font-size: 13px; color: #92400E; }
+    .footer { text-align: center; font-size: 12px; color: #8F99A3; margin-top: 24px; border-top: 1px solid #E2E6EA; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align: center;">
+      <span class="logo-badge">CONSULTORIO ODONTOLEAL</span>
+      <h1>Solicitud de Cita Recibida</h1>
+      <p style="color: #687380; font-size: 14px;">Hemos recibido tu solicitud y reservado provisionalmente tu espacio.</p>
+    </div>
+
+    <p>Estimado(a) <strong>${nombreSolicitante}</strong>,</p>
+    <p>Confirmamos la recepción de tu solicitud de cita odontológica a través de nuestro portal web:</p>
+
+    <div class="details">
+      <div class="detail-item"><span class="label">📅 Fecha solicitada:</span> <span class="value">${fecha}</span></div>
+      <div class="detail-item"><span class="label">⏰ Hora:</span> <span class="value">${hora}</span></div>
+      <div class="detail-item"><span class="label">👨‍⚕️ Profesional:</span> <span class="value">${doctor}</span></div>
+      <div class="detail-item"><span class="label">📋 Motivo:</span> <span class="value">${motivo}</span></div>
+      ${idSolicitud ? `<div class="detail-item"><span class="label">🔢 Solicitud N°:</span> <span class="value">#${idSolicitud}</span></div>` : ''}
+    </div>
+
+    <div class="alert-box">
+      ⏳ <strong>Estado: Sujeto a aprobación</strong><br>
+      El equipo de coordinación del consultorio revisará tu solicitud y te notificará la confirmación definitiva.
+    </div>
+
+    <p style="font-size: 13px; color: #687380;">
+      Para cualquier consulta, cambio o cancelación, comunícate directamente con nuestro consultorio al teléfono / WhatsApp: <strong>+57 300 123 4567</strong>.
+    </p>
+
+    <div class="footer">
+      © 2026 Consultorio Odontológico Dr. Eduar Leal Álvarez • Bogotá, Colombia
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    try {
+      const transporter = await this.getTransporter();
+      const info = await transporter.sendMail({
+        from: this.fromAddress,
+        to,
+        subject: `Solicitud de Cita Recibida en OdontoLeal - ${fecha} a las ${hora}`,
+        text: `Hola ${nombreSolicitante}.\n\nHemos recibido tu solicitud de cita para el día ${fecha} a las ${hora} con ${doctor}.\nMotivo: ${motivo}.\nEl consultorio revisará tu solicitud para confirmarla definitivamente. Para cambios comunícate al +57 300 123 4567.`,
+        html: htmlContent,
+      });
+
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+      console.log(`📧 Solicitud pública confirmada por correo a ${to}. Mensaje ID: ${info.messageId}`);
+      return { messageId: info.messageId, previewUrl };
+    } catch (err: any) {
+      console.error('❌ Error enviando correo de solicitud pública:', err?.message);
+      return { previewUrl: null };
     }
   }
 }

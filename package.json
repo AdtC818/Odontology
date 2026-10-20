@@ -1,12 +1,18 @@
 {
   "name": "odontology",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Sistema de gestión clínica OdontoLeal",
+  "main": "dist/app/server.js",
   "scripts": {
     "dev": "tsx watch src/app/server.ts",
-    "build": "tsc",
-    "start": "node dist/app/server.js"
+    "build": "tsc && vite build",
+    "heroku-postbuild": "npm run build",
+    "start": "node dist/app/server.js",
+    "test": "tsx --test src/modules/**/__tests__/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
   },
   "repository": {
     "type": "git",

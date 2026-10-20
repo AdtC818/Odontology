@@ -1,9 +1,16 @@
 import { db } from '../../../shared/infrastructure/database/database';
-import { CreateClinicalDocumentDTO } from './clinical-document.model';
+import {
+  ClinicalDocumentRecord,
+  ConsultationContextData,
+  CreateClinicalDocumentDTO,
+  IClinicalDocumentRepository,
+} from '../domain/clinical-document.repository.interface';
 
-export class ClinicalDocumentRepository {
+export class ClinicalDocumentRepository implements IClinicalDocumentRepository {
   // RF-DOC-001 a 004: Generar documento validando que el paciente no tenga "Datos incompletos"
-  async createClinicalDocument(dto: CreateClinicalDocumentDTO) {
+  async createClinicalDocument(
+    dto: CreateClinicalDocumentDTO
+  ): Promise<ClinicalDocumentRecord> {
     const patientRes = await db.query<{ sexo: string | null; id_historia: number }>(
       `SELECT p.sexo, hc.id_historia 
        FROM public.paciente p
@@ -16,7 +23,9 @@ export class ClinicalDocumentRepository {
       throw new Error('El paciente o su historia clínica no existen.');
     }
     if (!patientRes.rows[0].sexo) {
-      throw new Error('No se puede generar el documento clínico: el paciente tiene "Datos incompletos".');
+      throw new Error(
+        'No se puede generar el documento clínico: el paciente tiene "Datos incompletos".'
+      );
     }
 
     const jsonPayload = {
@@ -27,7 +36,7 @@ export class ClinicalDocumentRepository {
       detalles: dto.detalles,
       diligenciadoPor: {
         ...dto.diligenciadoPor,
-        fechaHoraISO: new Date().toISOString(),
+        fechaHoraISO: dto.diligenciadoPor.fechaHoraISO ?? new Date().toISOString(),
       },
     };
 
@@ -45,7 +54,7 @@ export class ClinicalDocumentRepository {
   }
 
   // RF-DOC-005: Consultar documentos clínicos del paciente del más reciente al más antiguo
-  async getDocumentsByPatient(idPaciente: number) {
+  async getDocumentsByPatient(idPaciente: number): Promise<ClinicalDocumentRecord[]> {
     const sql = `
       SELECT 
         e.id_evolucion AS "idDocumento",
@@ -53,6 +62,7 @@ export class ClinicalDocumentRepository {
         e.id_cita AS "idCita",
         e.evolucion->>'tipoDocumento' AS "tipoDocumento",
         e.evolucion->>'archivoPdfUrl' AS "archivoPdfUrl",
+        e.evolucion->>'modoFirma' AS "modoFirma",
         e.evolucion->'detalles' AS detalles,
         e.evolucion->'diligenciadoPor' AS "diligenciadoPor"
       FROM public.evolucion e
@@ -63,5 +73,74 @@ export class ClinicalDocumentRepository {
     `;
     const { rows } = await db.query(sql, [idPaciente]);
     return rows;
+  }
+
+  // Obtiene el contexto de paciente, historia clínica, cita y profesional responsable
+  async getConsultationContext(
+    idPaciente: number,
+    idCita: number
+  ): Promise<ConsultationContextData | null> {
+    const sql = `
+      SELECT 
+        p.id_paciente,
+        p.nombre_completo AS "pacienteNombre",
+        p.documento_identidad AS "pacienteDocumento",
+        p.fecha_nacimiento AS "fechaNacimiento",
+        p.sexo,
+        hc.id_historia AS "idHistoria",
+        c.id_cita AS "idCita",
+        c.id_usuario AS "idProfesionalResponsable",
+        c.estado AS "estadoCita",
+        u.nombre_completo AS "nombreProfesionalResponsable",
+        (
+          SELECT MIN(bc.id_bloque)
+          FROM public.bloques_citas bc
+          WHERE bc.id_cita = c.id_cita
+        ) AS "fechaInicioCita"
+      FROM public.paciente p
+      INNER JOIN public.historia_clinica hc ON hc.id_paciente = p.id_paciente
+      INNER JOIN public.cita c ON c.id_paciente = p.id_paciente AND c.id_cita = $2
+      INNER JOIN public.usuario u ON u.id_usuario = c.id_usuario
+      WHERE p.id_paciente = $1;
+    `;
+
+    const { rows } = await db.query(sql, [idPaciente, idCita]);
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const row = rows[0];
+    return {
+      paciente: {
+        idPaciente: row.id_paciente,
+        nombreCompleto: row.pacienteNombre,
+        documentoIdentidad: row.pacienteDocumento,
+        fechaNacimiento: row.fechaNacimiento,
+        sexo: row.sexo,
+        idHistoria: row.idHistoria,
+        acudiente: null,
+      },
+      cita: {
+        idCita: row.idCita,
+        idProfesionalResponsable: row.idProfesionalResponsable,
+        nombreProfesionalResponsable: row.nombreProfesionalResponsable,
+        firmaProfesionalUrl: null,
+        estado: row.estadoCita,
+        fechaInicioCita: row.fechaInicioCita,
+      },
+    };
+  }
+
+  // Regla de Negocio 5 (RF-DOC-005): Verifica si el paciente tiene una cita "En consulta" para permitir lectura a ROL-AUX
+  async hasActiveConsultationForPatient(idPaciente: number): Promise<boolean> {
+    const sql = `
+      SELECT 1
+      FROM public.cita c
+      WHERE c.id_paciente = $1
+        AND c.estado = 'En consulta'
+      LIMIT 1;
+    `;
+    const { rows } = await db.query(sql, [idPaciente]);
+    return rows.length > 0;
   }
 }

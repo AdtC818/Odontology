@@ -71,12 +71,13 @@ export const PasswordRecoveryPage: React.FC<PasswordRecoveryPageProps> = ({
         });
         setInfoMessage(res.message);
       } else {
-        await fetch('/api/v1/auth/recovery/request', {
+        const response = await fetch('/api/v1/auth/recovery/request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ correo: correo.trim().toLowerCase() }),
         });
-        setInfoMessage(RecoverPasswordUseCase.GENERIC_RESPONSE_MESSAGE);
+        const res = await response.json();
+        setInfoMessage(res.message || RecoverPasswordUseCase.GENERIC_RESPONSE_MESSAGE);
       }
     } catch {
       setInfoMessage(RecoverPasswordUseCase.GENERIC_RESPONSE_MESSAGE);
