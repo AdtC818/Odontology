@@ -68,6 +68,7 @@ router.get('/appointments/requests/:id', appointmentsController.getRequestById);
 router.post('/appointments/public-requests', appointmentsController.requestAppointmentPublic);
 router.post('/appointments/requests/:id/review', appointmentsController.reviewRequest);
 router.post('/appointments', appointmentsController.scheduleAppointment);
+router.put('/appointments/:id', appointmentsController.updateAppointment);
 router.patch('/appointments/:id/state', appointmentsController.changeState);
 router.get('/appointments/agenda', appointmentsController.getAgenda);
 

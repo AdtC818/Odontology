@@ -147,10 +147,12 @@ export class AppointmentsController {
       });
 
       // Envío de correo de confirmación de solicitud recibida (RF-AGE-003, RQNF-FIA-004)
+      const parts = String(bloqueSolicitado).split(' ');
+      const fecha = parts[0] || bloqueSolicitado;
+      const hora = (parts[1] || '').slice(0, 5) || 'Por confirmar';
+      const solId = (result as any).solicitud?.id_solicitud;
+
       try {
-        const parts = String(bloqueSolicitado).split(' ');
-        const fecha = parts[0] || bloqueSolicitado;
-        const hora = (parts[1] || '').slice(0, 5) || 'Por confirmar';
         await this.mailerService.sendPublicRequestReceivedEmail({
           to: correoSolicitante.trim(),
           nombreSolicitante: nombreSolicitante.trim(),
@@ -158,10 +160,33 @@ export class AppointmentsController {
           hora,
           doctor: 'Dr. Eduar Leal Álvarez',
           motivo: descripcion || 'Valoración odontológica solicitada',
-          idSolicitud: (result as any).solicitud?.id_solicitud,
+          idSolicitud: solId,
         });
       } catch (mailError: any) {
         console.error('RQNF-FIA-004: Falla en envío de correo al registrar solicitud:', mailError?.message);
+      }
+
+      // Notificación por correo a coordinadores de agendamiento o administrador (RF-AGE-004)
+      try {
+        const staffToNotify = await this.appointmentRepo.getStaffForNewRequestNotification();
+        for (const staff of staffToNotify) {
+          if (staff.correo) {
+            await this.mailerService.sendCoordinatorNewRequestAlertEmail({
+              to: staff.correo,
+              staffName: staff.nombreCompleto,
+              requesterName: nombreSolicitante.trim(),
+              requesterDni: documentoSolicitante.trim(),
+              requesterEmail: correoSolicitante.trim(),
+              requesterPhone: telefonoSolicitante?.trim(),
+              requestedDate: fecha,
+              requestedTime: hora,
+              motive: descripcion || 'Valoración odontológica solicitada en portal web',
+              idSolicitud: solId,
+            });
+          }
+        }
+      } catch (coordMailError: any) {
+        console.error('RQNF-FIA-004: Falla en notificación a coordinación:', coordMailError?.message);
       }
 
       res.status(201).json({
@@ -253,6 +278,29 @@ export class AppointmentsController {
         bloques,
       });
       res.status(201).json({ message: 'Cita confirmada exitosamente.', data: cita });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  };
+
+  updateAppointment = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const idCita = Number(req.params.id);
+      const { idDoctor, titulo, descripcion, selectedBlocks, idUsuarioGestor, motivo } = req.body;
+      const updated: any = await this.appointmentRepo.updateAppointmentDetails({
+        idCita,
+        idDoctor: idDoctor ? Number(idDoctor) : undefined,
+        titulo,
+        descripcion,
+        selectedBlocks,
+        idUsuarioGestor: idUsuarioGestor || 1,
+        motivo,
+      });
+
+      res.json({
+        message: 'Cita actualizada exitosamente.',
+        data: updated,
+      });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }

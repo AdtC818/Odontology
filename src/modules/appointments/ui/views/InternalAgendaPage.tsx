@@ -42,6 +42,7 @@ export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
     toggleSlotStatus,
     approveRequest,
     rejectRequest,
+    updateAppointment,
   } = useRealtimeAgenda();
 
   const { patients } = usePatients();
@@ -314,8 +315,13 @@ export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
     return (
       <AppointmentDetailPage
         appointment={activeAppointmentDetail}
+        doctors={doctors}
         onBack={() => setViewMode('AGENDA')}
         onNavigateToPatientProfile={onNavigateToPatientProfile}
+        onUpdateAppointment={async (idCita, data) => {
+          await updateAppointment(idCita, data);
+          await fetchAgenda();
+        }}
         onStartAttention={(idCita, idPaciente) => {
           startAttention(idCita);
           onStartAttention?.(idCita, idPaciente);

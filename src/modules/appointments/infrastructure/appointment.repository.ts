@@ -250,6 +250,11 @@ export class AppointmentRepository {
       if (solRes.rows.length === 0) throw new Error('Solicitud no encontrada.');
       const solicitud = solRes.rows[0];
 
+      // Regla de estados: Si la solicitud ya fue revisada (aprobada o rechazada), impedir cambios
+      if (solicitud.estado === false) {
+        throw new Error('Esta solicitud ya ha sido gestionada previamente y no puede ser modificada de nuevo.');
+      }
+
       // Actualizar estado de la solicitud
       await client.query(`UPDATE public.solicitud_cita SET estado = FALSE WHERE id_solicitud = $1;`, [
         params.idSolicitud,
@@ -496,6 +501,21 @@ export class AppointmentRepository {
       if (currentRes.rows.length === 0) throw new Error('La cita no existe.');
       const citaActual = currentRes.rows[0];
 
+      // Reglas de transición de estados de cita (Clean Code / SOLID)
+      if (['Cancelada', 'No asistió', 'Completada', 'Rechazada'].includes(citaActual.estado)) {
+        throw new Error(
+          `La cita se encuentra en estado final '${citaActual.estado}' y no permite cambios de estado posteriores.`
+        );
+      }
+
+      if (params.nuevoEstado === 'No asistió' && citaActual.estado !== 'Confirmada' && citaActual.estado !== 'En espera') {
+        throw new Error(`Solo se puede registrar inasistencia en citas en estado 'Confirmada' o 'En espera'.`);
+      }
+
+      if (params.nuevoEstado === 'Cancelada' && citaActual.estado !== 'Confirmada' && citaActual.estado !== 'En espera') {
+        throw new Error(`Solo se pueden cancelar citas en estado 'Confirmada' o 'En espera'.`);
+      }
+
       // Regla RF-AGE-009: Un profesional solo puede tener una cita "En consulta" a la vez
       if (params.nuevoEstado === 'En consulta') {
         const activeRes = await client.query(
@@ -534,6 +554,159 @@ export class AppointmentRepository {
 
       return updateRes.rows[0];
     });
+  }
+
+  // RF-AGE-006: Editar cita confirmada (profesional, tratamiento, descripción y bloques)
+  async updateAppointmentDetails(params: {
+    idCita: number;
+    idUsuarioGestor: number;
+    idDoctor?: number;
+    titulo?: string;
+    descripcion?: string;
+    selectedBlocks?: string[];
+    motivo?: string;
+  }) {
+    return db.withTransaction(async (client) => {
+      const currentRes = await client.query(
+        `SELECT c.*, p.nombre_completo AS "nombrePaciente", p.correo AS "correoPaciente"
+         FROM public.cita c
+         JOIN public.paciente p ON c.id_paciente = p.id_paciente
+         WHERE c.id_cita = $1 FOR UPDATE;`,
+        [params.idCita]
+      );
+      if (currentRes.rows.length === 0) throw new Error('La cita no existe.');
+      const cita = currentRes.rows[0];
+
+      if (cita.estado !== 'Confirmada') {
+        throw new Error(
+          `Las citas en estado '${cita.estado}' no pueden ser editadas. Solo se pueden modificar citas en estado Confirmada (RF-AGE-006).`
+        );
+      }
+
+      // 1. Actualizar datos básicos de la cita
+      await client.query(
+        `UPDATE public.cita
+         SET titulo = COALESCE($2, titulo),
+             descripcion = COALESCE($3, descripcion),
+             id_usuario = COALESCE($4, id_usuario)
+         WHERE id_cita = $1;`,
+        [params.idCita, params.titulo ? params.titulo.slice(0, 50) : null, params.descripcion, params.idDoctor]
+      );
+
+      // 2. Gestionar bloques de horario si fueron provistos
+      if (params.selectedBlocks && params.selectedBlocks.length > 0) {
+        const currentBcRes = await client.query(
+          `SELECT to_char(id_bloque, 'YYYY-MM-DD HH24:MI:SS') AS id_bloque FROM public.bloques_citas WHERE id_cita = $1;`,
+          [params.idCita]
+        );
+        const currentBlocks: string[] = currentBcRes.rows.map((r: any) => r.id_bloque);
+        const newBlocks: string[] = params.selectedBlocks.map((b) =>
+          String(b).replace('T', ' ').slice(0, 19)
+        );
+
+        // Bloques a liberar (los que la cita deja de usar)
+        const blocksToRelease = currentBlocks.filter((b) => !newBlocks.includes(b));
+        for (const b of blocksToRelease) {
+          await client.query(
+            `UPDATE public.bloques_horario SET ocupacion = FALSE WHERE inicio = $1;`,
+            [b]
+          );
+          await client.query(
+            `DELETE FROM public.bloques_citas WHERE id_cita = $1 AND id_bloque = $2;`,
+            [params.idCita, b]
+          );
+        }
+
+        // Bloques nuevos a ocupar
+        const blocksToOccupy = newBlocks.filter((b) => !currentBlocks.includes(b));
+        for (const b of blocksToOccupy) {
+          const slotCheck = await client.query<TimeSlotRow>(
+            `SELECT inicio, final, estado, ocupacion FROM public.bloques_horario WHERE inicio = $1 FOR UPDATE;`,
+            [b]
+          );
+
+          if (slotCheck.rows.length === 0) {
+            const bDate = new Date(b);
+            const bEndDate = new Date(bDate.getTime() + 30 * 60 * 1000);
+            const bEndStr = `${bEndDate.getFullYear()}-${(bEndDate.getMonth() + 1).toString().padStart(2, '0')}-${bEndDate.getDate().toString().padStart(2, '0')} ${bEndDate.getHours().toString().padStart(2, '0')}:${bEndDate.getMinutes().toString().padStart(2, '0')}:00`;
+
+            await client.query(
+              `INSERT INTO public.bloques_horario (inicio, final, estado, ocupacion) VALUES ($1, $2, TRUE, TRUE);`,
+              [b, bEndStr]
+            );
+          } else {
+            if (!slotCheck.rows[0].estado) {
+              throw new Error(`El bloque ${b} se encuentra deshabilitado.`);
+            }
+            if (slotCheck.rows[0].ocupacion) {
+              throw new Error(`El bloque ${b} ya se encuentra ocupado por otra cita.`);
+            }
+            await client.query(
+              `UPDATE public.bloques_horario SET ocupacion = TRUE WHERE inicio = $1;`,
+              [b]
+            );
+          }
+
+          await client.query(
+            `INSERT INTO public.bloques_citas (id_bloque, id_cita) VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+            [b, params.idCita]
+          );
+        }
+      }
+
+      // 3. Registrar auditoría en historial_cita
+      await client.query(
+        `INSERT INTO public.historial_cita (id_cita, id_usuario_gestor, reporte, motivo)
+         VALUES ($1, $2, 'Cita modificada / reprogramada', $3);`,
+        [params.idCita, params.idUsuarioGestor, params.motivo || 'Modificación de detalles y/o bloques de la cita']
+      );
+
+      // 4. Retornar cita actualizada
+      const updatedRes = await client.query(
+        `SELECT c.*, u.nombre_completo AS "nombreDoctor", u.correo AS "correoDoctor"
+         FROM public.cita c
+         JOIN public.usuario u ON c.id_usuario = u.id_usuario
+         WHERE c.id_cita = $1;`,
+        [params.idCita]
+      );
+
+      return {
+        ...updatedRes.rows[0],
+        correoPaciente: cita.correoPaciente,
+        nombrePaciente: cita.nombrePaciente,
+      };
+    });
+  }
+
+  // RF-AGE-004: Obtener personal a notificar ante solicitudes externas (Coordinadores o Administradores)
+  async getStaffForNewRequestNotification(): Promise<
+    Array<{ nombreCompleto: string; correo: string; rol: string }>
+  > {
+    // 1. Intentar obtener coordinadores de agendamiento activos
+    const coaRes = await db.query(
+      `SELECT DISTINCT u.nombre_completo AS "nombreCompleto", u.correo, r.nombre_rol AS "rol"
+       FROM public.usuario u
+       JOIN public.usuario_rol ur ON u.id_usuario = ur.id_usuario
+       JOIN public.rol r ON ur.id_rol = r.id_rol
+       WHERE (LOWER(r.nombre_rol) LIKE '%coordinad%' OR LOWER(r.nombre_rol) LIKE '%agend%')
+         AND u.estado = true AND ur.estado = true;`
+    );
+
+    if (coaRes.rows.length > 0) {
+      return coaRes.rows;
+    }
+
+    // 2. Si no hay coordinadores activos, recurrir a administradores del sistema
+    const admRes = await db.query(
+      `SELECT DISTINCT u.nombre_completo AS "nombreCompleto", u.correo, r.nombre_rol AS "rol"
+       FROM public.usuario u
+       JOIN public.usuario_rol ur ON u.id_usuario = ur.id_usuario
+       JOIN public.rol r ON ur.id_rol = r.id_rol
+       WHERE (LOWER(r.nombre_rol) LIKE '%administrad%' OR LOWER(r.nombre_rol) LIKE '%admin%')
+         AND u.estado = true AND ur.estado = true;`
+    );
+
+    return admRes.rows;
   }
 
   // RF-AGE-008: Consultar agenda con paciente, bloques e historial

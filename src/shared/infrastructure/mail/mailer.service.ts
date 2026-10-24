@@ -537,4 +537,105 @@ export class MailerService implements IMailerPort {
       return { previewUrl: null };
     }
   }
+
+  /**
+   * Envía alerta de nueva solicitud externa recibida a los coordinadores de agendamiento o administrador (RF-AGE-004).
+   */
+  async sendCoordinatorNewRequestAlertEmail(params: {
+    to: string;
+    staffName: string;
+    requesterName: string;
+    requesterDni: string;
+    requesterEmail: string;
+    requesterPhone?: string;
+    requestedDate: string;
+    requestedTime: string;
+    motive: string;
+    idSolicitud?: number;
+  }): Promise<{ messageId?: string; previewUrl?: string | null }> {
+    const {
+      to,
+      staffName,
+      requesterName,
+      requesterDni,
+      requesterEmail,
+      requesterPhone,
+      requestedDate,
+      requestedTime,
+      motive,
+      idSolicitud,
+    } = params;
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Nueva Solicitud de Cita Recibida - OdontoLeal</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #F8F9FA; margin: 0; padding: 24px; color: #1E242B; }
+    .card { max-width: 560px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E6EA; border-top: 5px solid #D4AF37; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .logo-badge { display: inline-block; background-color: #111111; color: #D4AF37; font-size: 12px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 14px; border-radius: 999px; }
+    h1 { font-size: 22px; font-weight: 800; color: #1E242B; margin: 16px 0 8px 0; }
+    .details { background-color: #F8F9FA; border: 1px solid #E2E6EA; border-radius: 12px; padding: 18px; margin: 20px 0; }
+    .detail-item { margin: 8px 0; font-size: 14px; }
+    .label { font-weight: bold; color: #687380; }
+    .value { font-weight: 600; color: #1E242B; }
+    .notice-box { background-color: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 12px; padding: 14px; margin: 16px 0; font-size: 13px; color: #1E40AF; }
+    .footer { text-align: center; font-size: 12px; color: #8F99A3; margin-top: 24px; border-top: 1px solid #E2E6EA; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align: center;">
+      <span class="logo-badge">CONSULTORIO ODONTOLEAL • COORDINACIÓN DE AGENDAMIENTO</span>
+      <h1>Nueva Solicitud de Cita Externa</h1>
+      <p style="color: #687380; font-size: 14px;">Un paciente ha registrado una solicitud de cita médica pendiente de revisión.</p>
+    </div>
+
+    <p>Estimado(a) <strong>${staffName}</strong>,</p>
+    <p>Se ha recibido una nueva solicitud de cita a través del portal web oficial:</p>
+
+    <div class="details">
+      <div class="detail-item"><span class="label">👤 Paciente Solicitante:</span> <span class="value">${requesterName}</span></div>
+      <div class="detail-item"><span class="label">🪪 Documento de Identidad:</span> <span class="value">${requesterDni}</span></div>
+      <div class="detail-item"><span class="label">✉ Correo Electrónico:</span> <span class="value">${requesterEmail}</span></div>
+      ${requesterPhone ? `<div class="detail-item"><span class="label">📞 Teléfono de Contacto:</span> <span class="value">${requesterPhone}</span></div>` : ''}
+      <div class="detail-item"><span class="label">📅 Fecha Solicitada:</span> <span class="value">${requestedDate}</span></div>
+      <div class="detail-item"><span class="label">⏰ Hora Solicitada:</span> <span class="value">${requestedTime}</span></div>
+      <div class="detail-item"><span class="label">📋 Motivo / Síntomas:</span> <span class="value">${motive}</span></div>
+      ${idSolicitud ? `<div class="detail-item"><span class="label">🔢 N° Solicitud:</span> <span class="value">#${idSolicitud}</span></div>` : ''}
+    </div>
+
+    <div class="notice-box">
+      🔔 <strong>Acción Requerida:</strong><br>
+      El bloque de horario ha quedado reservado provisionalmente. Por favor ingresa al módulo de <strong>Agenda Médica</strong> para revisar la solicitud, asignar el profesional correspondiente y confirmarla o rechazarla.
+    </div>
+
+    <div class="footer">
+      © 2026 Consultorio Odontológico Dr. Eduar Leal Álvarez • Bogotá, Colombia
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    try {
+      const transporter = await this.getTransporter();
+      const info = await transporter.sendMail({
+        from: this.fromAddress,
+        to,
+        subject: `Nueva Solicitud de Cita Recibida en Portal Web - ${requesterName} (#${idSolicitud || 'Web'})`,
+        text: `Hola ${staffName}.\n\nSe ha recibido una nueva solicitud de cita de ${requesterName} (Doc: ${requesterDni}, Tel: ${requesterPhone || 'N/A'}) para el ${requestedDate} a las ${requestedTime}.\nMotivo: ${motive}.\nPor favor ingresa a la Agenda Médica para gestionarla.`,
+        html: htmlContent,
+      });
+
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+      console.log(`📧 Alerta de nueva solicitud enviada a coordinación (${to}). Mensaje ID: ${info.messageId}`);
+      return { messageId: info.messageId, previewUrl };
+    } catch (err: any) {
+      console.error('❌ Error enviando correo de alerta a coordinación:', err?.message);
+      return { previewUrl: null };
+    }
+  }
 }

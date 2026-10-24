@@ -440,6 +440,43 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
     [apiBaseUrl, fetchAgenda]
   );
 
+  // RF-AGE-006: Editar cita confirmada
+  const updateAppointment = useCallback(
+    async (
+      idCita: number,
+      data: {
+        idDoctor?: number;
+        titulo?: string;
+        descripcion?: string;
+        selectedBlocks?: string[];
+        motivo?: string;
+      }
+    ) => {
+      try {
+        const res = await fetch(`${apiBaseUrl}/appointments/${idCita}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...data,
+            idUsuarioGestor: 1,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || 'Error al actualizar la cita.');
+        }
+
+        await fetchAgenda();
+        return await res.json();
+      } catch (err: any) {
+        console.error('Error updating appointment:', err.message);
+        throw err;
+      }
+    },
+    [apiBaseUrl, fetchAgenda]
+  );
+
   return {
     selectedDate,
     setSelectedDate,
@@ -468,5 +505,6 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
     toggleSlotStatus,
     approveRequest,
     rejectRequest,
+    updateAppointment,
   };
 }
