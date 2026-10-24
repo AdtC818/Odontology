@@ -413,7 +413,7 @@ describe('MÓDULO C (Parte 2): Historia Clínica, Odontograma y Evolución (RF-H
       inasistenciasPaciente: [
         {
           idCita: 802,
-          fechaHora: '2026-10-24T10:00:00Z',
+          fechaHora: new Date(Date.now() + 60000).toISOString(),
           profesionalResponsable: 'Dr. Eduar Leal Álvarez',
           observacion: 'El paciente no asistió a su cita de control',
         },

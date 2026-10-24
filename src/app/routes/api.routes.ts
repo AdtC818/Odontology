@@ -58,7 +58,13 @@ router.patch('/users/:id/status', usersController.toggleUserStatus);
 
 // 2. Rutas Módulo B: Agendamiento de Citas
 router.post('/appointments/slots', appointmentsController.upsertTimeSlot);
+router.get('/appointments/available-slots', appointmentsController.getAvailableSlots);
+router.post('/appointments/generate-day-slots', appointmentsController.generateDaySlots);
+router.patch('/appointments/slots/toggle', appointmentsController.toggleSlotStatus);
 router.get('/appointments/slots', appointmentsController.getTimeSlots);
+router.get('/appointments/monthly-summary', appointmentsController.getMonthlySummary);
+router.get('/appointments/requests', appointmentsController.getRequests);
+router.get('/appointments/requests/:id', appointmentsController.getRequestById);
 router.post('/appointments/public-requests', appointmentsController.requestAppointmentPublic);
 router.post('/appointments/requests/:id/review', appointmentsController.reviewRequest);
 router.post('/appointments', appointmentsController.scheduleAppointment);

@@ -18,6 +18,54 @@ export class AppointmentsController {
     }
   };
 
+  generateDaySlots = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const fecha = (req.body.fecha || req.query.fecha || '').toString();
+      if (!fecha) {
+        res.status(400).json({ message: 'El parámetro fecha es obligatorio en formato YYYY-MM-DD.' });
+        return;
+      }
+      const result = await this.appointmentRepo.generateDaySlots(fecha);
+      res.status(201).json({
+        message: `Se generaron ${result.totalGenerados} bloques de horario para la fecha ${result.fecha} (06:00 a 20:00).`,
+        data: result,
+      });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  };
+
+  getAvailableSlots = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const fecha = (req.query.fecha || '').toString();
+      if (!fecha) {
+        res.status(400).json({ message: 'El parámetro fecha es obligatorio en formato YYYY-MM-DD.' });
+        return;
+      }
+      const slots = await this.appointmentRepo.getAvailableSlots(fecha);
+      res.json({ data: slots });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  };
+
+  toggleSlotStatus = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { inicio } = req.body;
+      if (!inicio) {
+        res.status(400).json({ message: 'El parámetro inicio es obligatorio.' });
+        return;
+      }
+      const slot = await this.appointmentRepo.toggleSlotStatus(inicio);
+      res.json({
+        message: `Bloque ${slot.inicio} ${slot.estado ? 'habilitado' : 'deshabilitado'} exitosamente.`,
+        data: slot,
+      });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  };
+
   getTimeSlots = async (req: Request, res: Response): Promise<void> => {
     try {
       const { desde, hasta } = req.query;
@@ -31,6 +79,40 @@ export class AppointmentsController {
     }
   };
 
+  getMonthlySummary = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const year = req.query.year ? Number(req.query.year) : 2026;
+      const month = req.query.month ? Number(req.query.month) : 10;
+      const summary = await this.appointmentRepo.getMonthlySummary(year, month);
+      res.json({ data: summary });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  };
+
+  getRequests = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const requests = await this.appointmentRepo.getRequests();
+      res.json({ data: requests });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  };
+
+  getRequestById = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const id = Number(req.params.id);
+      const request = await this.appointmentRepo.getRequestById(id);
+      if (!request) {
+        res.status(404).json({ message: 'Solicitud no encontrada.' });
+        return;
+      }
+      res.json({ data: request });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  };
+
   requestAppointmentPublic = async (req: Request, res: Response): Promise<void> => {
     try {
       const {
@@ -39,6 +121,7 @@ export class AppointmentsController {
         correoSolicitante,
         telefonoSolicitante,
         fechaNacimiento,
+        sexo,
         bloqueSolicitado,
         descripcion,
         idProfesional,
@@ -57,6 +140,7 @@ export class AppointmentsController {
         correoSolicitante,
         telefonoSolicitante,
         fechaNacimiento,
+        sexo,
         bloqueSolicitado,
         descripcion,
         idProfesional,
@@ -96,36 +180,63 @@ export class AppointmentsController {
       const result: any = await this.appointmentRepo.reviewRequest({
         idSolicitud,
         idUsuarioGestor: idUsuarioGestor || 1,
-        aprobar,
-        motivo: motivo || (aprobar ? 'Solicitud aprobada' : 'Solicitud rechazada'),
+        aprobar: aprobar !== false,
+        motivo: motivo || (aprobar ? 'Solicitud aprobada y confirmada en agenda médica' : 'Solicitud rechazada'),
         idPaciente,
         idProfesional,
       });
 
-      // Notificación por correo al solicitante al aprobar o rechazar (RF-AGE-005, RQNF-FIA-004)
-      if (result?.correoPaciente) {
+      // Notificación por correo al solicitante al aprobar (RF-AGE-005, RQNF-FIA-004)
+      if (result?.correoPaciente && (aprobar !== false)) {
         try {
           const parts = String(result.fechaHora || '').split(' ');
           const fecha = parts[0] || 'Por confirmar';
-          const hora = (parts[1] || '').slice(0, 5) || 'Por confirmar';
+          const hora = (parts[1] || '').slice(0, 5) || '15:30';
 
-          if (aprobar) {
-            await this.mailerService.sendAppointmentConfirmationEmail({
-              to: result.correoPaciente,
-              nombrePaciente: result.nombrePaciente || 'Paciente',
+          await this.mailerService.sendAppointmentConfirmationEmail({
+            to: result.correoPaciente,
+            nombrePaciente: result.nombrePaciente || 'Paciente',
+            fecha,
+            hora,
+            doctor: result.nombreDoctor || 'Dr. Mateo Gómez',
+            motivo: result.titulo || result.descripcion || 'Valoración Odontológica Confirmada',
+            idCita: result.id_cita || result.idCita,
+          });
+          console.log(`📧 Correo de confirmación enviado exitosamente a ${result.correoPaciente}`);
+        } catch (mailError: any) {
+          console.error('RQNF-FIA-004: Falla en envío de correo de revisión de solicitud al paciente:', mailError?.message);
+        }
+
+        // Notificación por correo al doctor asignado (RF-AGE-005, RQNF-FIA-004)
+        if (result?.correoDoctor) {
+          try {
+            const parts = String(result.fechaHora || '').split(' ');
+            const fecha = parts[0] || 'Por confirmar';
+            const hora = (parts[1] || '').slice(0, 5) || '15:30';
+
+            await this.mailerService.sendDoctorAppointmentNotificationEmail({
+              to: result.correoDoctor,
+              doctorName: result.nombreDoctor || 'Doctor',
+              patientName: result.nombrePaciente || 'Paciente',
               fecha,
               hora,
-              doctor: 'Dr. Eduar Leal Álvarez',
-              motivo: result.titulo || 'Cita Odontológica Confirmada',
-              idCita: result.id_cita,
+              motivo: result.titulo || result.descripcion || 'Valoración Odontológica Confirmada',
+              idCita: result.id_cita || result.idCita,
+              telefonoPaciente: result.telefonoPaciente,
             });
+            console.log(`📧 Notificación de cita enviada exitosamente al doctor ${result.correoDoctor}`);
+          } catch (docMailError: any) {
+            console.error('RQNF-FIA-004: Falla en envío de correo de revisión al doctor:', docMailError?.message);
           }
-        } catch (mailError: any) {
-          console.error('RQNF-FIA-004: Falla en envío de correo de revisión de solicitud:', mailError?.message);
         }
       }
 
-      res.json({ message: 'Solicitud gestionada correctamente.', data: result });
+      res.json({
+        message: aprobar
+          ? 'Cita creada y confirmada exitosamente. Se ha enviado el correo de confirmación al paciente.'
+          : 'Solicitud rechazada correctamente.',
+        data: result,
+      });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -169,7 +280,8 @@ export class AppointmentsController {
     try {
       const idProfesional = req.query.idProfesional ? Number(req.query.idProfesional) : undefined;
       const idPaciente = req.query.idPaciente ? Number(req.query.idPaciente) : undefined;
-      const agenda = await this.appointmentRepo.getAgenda(idProfesional, idPaciente);
+      const fecha = req.query.fecha ? String(req.query.fecha) : undefined;
+      const agenda = await this.appointmentRepo.getAgenda(idProfesional, idPaciente, fecha);
       res.json({ data: agenda });
     } catch (error: any) {
       res.status(500).json({ message: error.message });

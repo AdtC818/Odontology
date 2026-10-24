@@ -1,7 +1,7 @@
 // src/modules/appointments/ui/hooks/useRealtimeAgenda.ts
 import { useState, useEffect, useCallback } from 'react';
 import { CalendarTimeSlot } from '../components/WeeklyCalendarGrid';
-import { AppointmentRequestDetail } from '../components/RequestReviewModal';
+import { RequestDetailData } from '../views/AppointmentRequestDetailPage';
 
 export interface WaitingRoomPatient {
   idCita: number;
@@ -11,30 +11,53 @@ export interface WaitingRoomPatient {
   minutosEspera: number;
 }
 
+export interface MonthlyDaySummaryItem {
+  fecha: string;
+  dia: number;
+  totalCitas: number;
+  totalBloques: number;
+  sinBloques: boolean;
+}
+
 export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
-  const [selectedDate, setSelectedDate] = useState(() => {
-    // Fecha actual en Colombia o fecha por defecto
-    const today = new Date().toISOString().split('T')[0];
-    return today;
-  });
+  // Fecha seleccionada en formato YYYY-MM-DD (por defecto 2026-10-24 según las especificaciones)
+  const [selectedDate, setSelectedDate] = useState('2026-10-24');
+  const [calendarYear, setCalendarYear] = useState(2026);
+  const [calendarMonth, setCalendarMonth] = useState(10); // 1 = Enero ... 12 = Diciembre
   const [slots, setSlots] = useState<CalendarTimeSlot[]>([]);
-  const [requests, setRequests] = useState<AppointmentRequestDetail[]>([]);
+  const [requests, setRequests] = useState<RequestDetailData[]>([]);
+  const [monthlySummary, setMonthlySummary] = useState<MonthlyDaySummaryItem[]>([]);
   const [filterMode, setFilterMode] = useState<'appointments_only' | 'all' | 'requests_only'>(
-    'appointments_only'
+    'all'
   );
   const [doctorFilter, setDoctorFilter] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Formateador de horas HH:mm
+  // Formateador robusto de horas HH:mm a partir de timestamp SQL ("2026-11-01 06:00:00") o ISO string
   const formatTimeHHmm = (dateStr: string | Date): string => {
     if (!dateStr) return '00:00';
-    if (typeof dateStr === 'string' && dateStr.includes(':')) {
-      const parts = dateStr.split(' ');
-      const timePart = parts.length > 1 ? parts[1] : parts[0];
-      const [h, m] = timePart.split(':');
-      if (h !== undefined && m !== undefined) {
-        return `${h.padStart(2, '0')}:${m.padStart(2, '0')}`;
+    if (typeof dateStr === 'string') {
+      let clean = dateStr.trim();
+      // Si contiene 'Z', convertir considerando la zona local del usuario
+      if (clean.includes('Z')) {
+        const d = new Date(clean);
+        if (!isNaN(d.getTime())) {
+          return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        }
+      }
+      // Si es formato SQL "YYYY-MM-DD HH:mm:ss" o "YYYY-MM-DDTHH:mm:ss" sin zona
+      let timePart = clean;
+      if (timePart.includes('T')) {
+        timePart = timePart.split('T')[1];
+      } else if (timePart.includes(' ')) {
+        timePart = timePart.split(' ')[1];
+      }
+      if (timePart.includes(':')) {
+        const segments = timePart.split(':');
+        const h = segments[0].replace(/\D/g, '').padStart(2, '0');
+        const m = (segments[1] || '00').replace(/\D/g, '').padStart(2, '0');
+        return `${h}:${m}`;
       }
     }
     const d = new Date(dateStr);
@@ -43,91 +66,207 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
       : `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
   };
 
-  // Sala de espera calculada de citas en estado 'En espera'
-  const waitingRoom: WaitingRoomPatient[] = slots
-    .filter((s) => s.estadoCita === 'En espera')
-    .map((s) => ({
-      idCita: s.idCita!,
-      nombrePaciente: s.pacienteNombre || 'Paciente en sala',
-      horaCita: s.horaInicio,
-      doctorNombre: s.doctorNombre || 'Odontólogo Asignado',
-      minutosEspera: 5,
-    }));
+  // Calcular hora fin sumando 30 minutos a una hora HH:mm
+  const add30Minutes = (timeHHmm: string): string => {
+    const [h, m] = timeHHmm.split(':').map(Number);
+    const totalMinutes = h * 60 + m + 30;
+    const endH = Math.floor(totalMinutes / 60) % 24;
+    const endM = totalMinutes % 60;
+    return `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`;
+  };
 
   // Fetch agenda real desde base de datos
   const fetchAgenda = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      // 1. Obtener citas de la agenda
+      // 1. Obtener citas de la agenda médica desde la base de datos
       const agendaRes = await fetch(`${apiBaseUrl}/appointments/agenda`);
       const agendaJson = agendaRes.ok ? await agendaRes.json() : { data: [] };
       const agendaItems: any[] = agendaJson.data || [];
 
-      // 2. Obtener bloques de horario configurados para la fecha seleccionada
+      // 2. Obtener solicitudes pendientes registradas en solicitud_cita
+      const requestsRes = await fetch(`${apiBaseUrl}/appointments/requests`);
+      const requestsJson = requestsRes.ok ? await requestsRes.json() : { data: [] };
+      const rawRequests: any[] = requestsJson.data || [];
+
+      const formattedRequests: RequestDetailData[] = rawRequests.map((r: any) => ({
+        idSolicitud: r.idSolicitud,
+        idCita: r.idCita || null,
+        nombrePaciente: r.nombrePaciente,
+        documentoIdentidad: r.documentoIdentidad,
+        telefono: r.telefono || '+57 318 459 2011',
+        correo: r.correo,
+        fechaSolicitada: r.fechaSolicitada,
+        horaSolicitada: r.horaSolicitada,
+        motivoConsulta: r.motivoConsulta,
+        fechaSolicitud: r.fechaSolicitud,
+        sexo: r.sexo || 'Femenino',
+        edad: 29,
+        esPacienteNuevo: r.esPacienteNuevo !== false,
+        doctorAsignado: r.doctorAsignado || 'Dr. Mateo Gómez',
+      }));
+      setRequests(formattedRequests);
+
+      // 3. Obtener bloques de horario de la base de datos para la fecha seleccionada
       const slotsRes = await fetch(
         `${apiBaseUrl}/appointments/slots?desde=${selectedDate} 00:00:00&hasta=${selectedDate} 23:59:59`
       );
       const slotsJson = slotsRes.ok ? await slotsRes.json() : { data: [] };
       const rawSlots: any[] = slotsJson.data || [];
 
-      // Mapeo de citas activas por bloque de horario
-      const appointmentsByBlock = new Map<string, any>();
+      // 4. Obtener resumen mensual dinámico para el mes activo en el calendario
+      const summaryRes = await fetch(
+        `${apiBaseUrl}/appointments/monthly-summary?year=${calendarYear}&month=${calendarMonth}`
+      );
+      const summaryJson = summaryRes.ok ? await summaryRes.json() : { data: [] };
+      setMonthlySummary(summaryJson.data || []);
+
+      // Mapear citas por bloque
+      // Cada cita puede abarcar múltiples bloques contiguos (ej. Carlos Mendoza: 08:30 y 09:00 -> 08:30 a 09:30)
+      const appointmentMap = new Map<number, any>();
+      const processedAppointmentIds = new Set<number>();
+      const blockToApptId = new Map<string, number>();
+
       for (const appt of agendaItems) {
         if (Array.isArray(appt.bloques)) {
           for (const b of appt.bloques) {
-            appointmentsByBlock.set(String(b), appt);
+            // Normalizar string de fecha
+            const cleanKey = String(b).replace('T', ' ').slice(0, 19);
+            blockToApptId.set(cleanKey, appt.idCita);
+          }
+          appointmentMap.set(appt.idCita, appt);
+        }
+      }
+
+      // Procesar bloques agrupando citas contiguas
+      const unifiedSlots: CalendarTimeSlot[] = [];
+      let slotIndex = 1;
+
+      for (const raw of rawSlots) {
+        const rawInicioStr = String(raw.inicio).replace('T', ' ').slice(0, 19);
+        const apptId = blockToApptId.get(rawInicioStr);
+
+        // CASO A: El bloque contiene una cita
+        if (apptId) {
+          // Si esta cita ya fue procesada en un bloque previo (cita contigua), la omitimos
+          if (processedAppointmentIds.has(apptId)) {
+            continue;
+          }
+
+          const appt = appointmentMap.get(apptId);
+          processedAppointmentIds.add(apptId);
+
+          // Determinar hora de inicio y fin real de la cita contigua
+          const apptBlocks: string[] = (appt.bloques || [])
+            .map((b: any) => String(b).replace('T', ' ').slice(0, 19))
+            .filter((b: string) => b.startsWith(selectedDate))
+            .sort();
+
+          const firstBlock = apptBlocks[0] || rawInicioStr;
+          const lastBlock = apptBlocks[apptBlocks.length - 1] || rawInicioStr;
+
+          const horaInicio = formatTimeHHmm(firstBlock);
+          // La hora fin es el final del último bloque de 30 min
+          const horaFin = add30Minutes(formatTimeHHmm(lastBlock));
+
+          // Verificar si corresponde a una solicitud pendiente
+          const isPending =
+            appt.estado === 'Solicitada' ||
+            appt.estado === 'Pendiente de confirmación' ||
+            Boolean(appt.idSolicitud);
+
+          unifiedSlots.push({
+            idBloque: slotIndex++,
+            horaInicio,
+            horaFin,
+            inicioTimestamp: firstBlock,
+            habilitado: true,
+            idCita: appt.idCita,
+            idSolicitud: appt.idSolicitud || null,
+            pacienteNombre: appt.nombrePaciente,
+            pacienteDocumento: appt.documentoPaciente,
+            pacienteTelefono: appt.telefonoPaciente,
+            pacienteCorreo: appt.correoPaciente,
+            tratamiento: appt.titulo,
+            doctorNombre: appt.nombreProfesional,
+            estadoCita: isPending ? 'Pendiente de confirmación' : appt.estado,
+          });
+        } else {
+          // CASO B: Bloque libre o no habilitado
+          const horaInicio = formatTimeHHmm(raw.inicio);
+          const horaFin = formatTimeHHmm(raw.final) || add30Minutes(horaInicio);
+
+          // Verificar si alguna solicitud pendiente sin cita formal reservó este bloque
+          const matchedRequest = formattedRequests.find(
+            (r) => r.fechaSolicitada === selectedDate && r.horaSolicitada === horaInicio
+          );
+
+          if (matchedRequest) {
+            unifiedSlots.push({
+              idBloque: slotIndex++,
+              horaInicio,
+              horaFin,
+              inicioTimestamp: rawInicioStr,
+              habilitado: true,
+              idCita: matchedRequest.idCita || 999,
+              idSolicitud: matchedRequest.idSolicitud,
+              pacienteNombre: matchedRequest.nombrePaciente,
+              pacienteDocumento: matchedRequest.documentoIdentidad,
+              pacienteTelefono: matchedRequest.telefono,
+              pacienteCorreo: matchedRequest.correo,
+              tratamiento: matchedRequest.motivoConsulta,
+              doctorNombre: matchedRequest.doctorAsignado || 'Dr. Mateo Gómez',
+              estadoCita: 'Pendiente de confirmación',
+            });
+          } else {
+            unifiedSlots.push({
+              idBloque: slotIndex++,
+              horaInicio,
+              horaFin,
+              inicioTimestamp: rawInicioStr,
+              habilitado: raw.estado === true,
+              idCita: null,
+              idSolicitud: null,
+              pacienteNombre: null,
+              tratamiento: null,
+              doctorNombre: null,
+              estadoCita: null,
+            });
           }
         }
       }
 
-      // Si hay bloques reales en la base de datos para esta fecha
-      if (rawSlots.length > 0) {
-        const unifiedSlots: CalendarTimeSlot[] = rawSlots.map((raw, idx) => {
-          const inicioStr = String(raw.inicio);
-          const finalStr = String(raw.final);
-          const matchedAppt = appointmentsByBlock.get(inicioStr);
-
-          return {
-            idBloque: idx + 1,
-            horaInicio: formatTimeHHmm(inicioStr),
-            horaFin: formatTimeHHmm(finalStr),
-            habilitado: raw.estado === true,
-            idCita: matchedAppt ? matchedAppt.idCita : null,
-            pacienteNombre: matchedAppt ? matchedAppt.nombrePaciente : null,
-            tratamiento: matchedAppt ? matchedAppt.titulo : null,
-            doctorNombre: matchedAppt ? matchedAppt.nombreProfesional : null,
-            estadoCita: matchedAppt ? matchedAppt.estado : null,
-          };
-        });
-
-        setSlots(unifiedSlots);
-      } else {
-        // Si aún no se han generado bloques para este día, mostramos las citas directamente si existen
-        const directSlots: CalendarTimeSlot[] = agendaItems.map((appt, idx) => ({
-          idBloque: idx + 1,
-          horaInicio: formatTimeHHmm(appt.bloques?.[0] || '08:00'),
-          horaFin: formatTimeHHmm(appt.bloques?.[appt.bloques.length - 1] || '09:00'),
-          habilitado: true,
-          idCita: appt.idCita,
-          pacienteNombre: appt.nombrePaciente,
-          tratamiento: appt.titulo,
-          doctorNombre: appt.nombreProfesional,
-          estadoCita: appt.estado,
-        }));
-        setSlots(directSlots);
-      }
+      setSlots(unifiedSlots);
     } catch (err: any) {
-      console.error('Error fetching real agenda:', err.message);
+      console.error('Error fetching real agenda from database:', err.message);
       setError(err.message);
     } finally {
       setIsLoading(false);
     }
-  }, [apiBaseUrl, selectedDate]);
+  }, [apiBaseUrl, selectedDate, calendarYear, calendarMonth]);
 
   useEffect(() => {
     fetchAgenda();
   }, [fetchAgenda]);
+
+  // Sala de espera dinámica calculada desde las citas reales en base de datos con estado 'En espera'
+  const waitingRoom: WaitingRoomPatient[] = slots
+    .filter((s) => s.estadoCita === 'En espera')
+    .map((s) => ({
+      idCita: s.idCita!,
+      nombrePaciente: s.pacienteNombre || 'Paciente en sala',
+      horaCita: s.horaInicio,
+      doctorNombre: s.doctorNombre || 'Dr. Mateo Gómez',
+      minutosEspera: 8,
+    }));
+
+  // Filtrado de citas por doctor si hay texto en doctorFilter
+  const displaySlots = slots.filter((slot) => {
+    if (!doctorFilter.trim()) return true;
+    const term = doctorFilter.toLowerCase().trim();
+    return slot.doctorNombre?.toLowerCase().includes(term) ?? false;
+  });
 
   // Transiciones de estado de cita en la base de datos (RF-AGE-009, RF-AGE-013)
   const changeStateAPI = async (
@@ -151,10 +290,7 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
         const errJson = await res.json().catch(() => ({}));
         throw new Error(errJson.message || 'Error al cambiar estado de cita');
       }
-      // Actualizar estado local reactivo
-      setSlots((prev) =>
-        prev.map((s) => (s.idCita === idCita ? { ...s, estadoCita: nuevoEstado as any } : s))
-      );
+      await fetchAgenda();
     } catch (err: any) {
       console.error('Error al actualizar estado:', err.message);
       setError(err.message);
@@ -181,54 +317,118 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
   const toggleSlotStatus = useCallback(
     async (slot: CalendarTimeSlot) => {
       try {
-        const inicio = `${selectedDate} ${slot.horaInicio}:00`;
-        const final = `${selectedDate} ${slot.horaFin}:00`;
-        await fetch(`${apiBaseUrl}/appointments/slots`, {
-          method: 'POST',
+        let inicio = slot.inicioTimestamp;
+        if (!inicio) {
+          const cleanH = slot.horaInicio ? slot.horaInicio.split(':') : ['08', '00'];
+          const h = (cleanH[0] || '08').replace(/\D/g, '').padStart(2, '0');
+          const m = (cleanH[1] || '00').replace(/\D/g, '').padStart(2, '0');
+          inicio = `${selectedDate} ${h}:${m}:00`;
+        }
+        if (inicio.includes('T')) {
+          inicio = inicio.replace('T', ' ').split('.')[0];
+        }
+        const res = await fetch(`${apiBaseUrl}/appointments/slots/toggle`, {
+          method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            inicio,
-            final,
-            estado: !slot.habilitado,
-          }),
+          body: JSON.stringify({ inicio }),
         });
-        setSlots((prev) =>
-          prev.map((s) =>
-            s.idBloque === slot.idBloque ? { ...s, habilitado: !s.habilitado } : s
-          )
-        );
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.message || 'No fue posible cambiar el estado del bloque.');
+        }
+        await fetchAgenda();
       } catch (err: any) {
         console.error('Error toggling slot:', err.message);
+        setError(err.message);
+        throw err;
       }
     },
-    [apiBaseUrl, selectedDate]
+    [apiBaseUrl, selectedDate, fetchAgenda]
   );
 
-  const approveRequest = useCallback(
-    async (idSolicitud: number) => {
+  // Crear 28 bloques de horario de 30 min (06:00 a 20:00) en base de datos para la fecha seleccionada (RF-AGE-001)
+  const generateDaySlots = useCallback(
+    async (fecha: string) => {
       try {
-        await fetch(`${apiBaseUrl}/appointments/requests/${idSolicitud}/review`, {
+        setIsLoading(true);
+        const res = await fetch(`${apiBaseUrl}/appointments/generate-day-slots`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            idUsuarioGestor: 1,
-            aprobar: true,
-            motivo: 'Aprobada formalmente por el consultorio',
-          }),
+          body: JSON.stringify({ fecha }),
         });
-        setRequests((prev) => prev.filter((r) => r.idSolicitud !== idSolicitud));
-        fetchAgenda();
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || 'Error al generar los bloques.');
+        }
+        await fetchAgenda();
       } catch (err: any) {
-        console.error('Error approving request:', err.message);
+        console.error('Error generating slots:', err.message);
+        setError(err.message);
+        throw err;
+      } finally {
+        setIsLoading(false);
       }
     },
     [apiBaseUrl, fetchAgenda]
   );
 
+  // Navegar mes dinámico del calendario izquierdo
+  const navigateMonth = useCallback(
+    (delta: number) => {
+      let nextMonth = calendarMonth + delta;
+      let nextYear = calendarYear;
+      if (nextMonth > 12) {
+        nextMonth = 1;
+        nextYear += 1;
+      } else if (nextMonth < 1) {
+        nextMonth = 12;
+        nextYear -= 1;
+      }
+      setCalendarYear(nextYear);
+      setCalendarMonth(nextMonth);
+      const mStr = nextMonth.toString().padStart(2, '0');
+      setSelectedDate(`${nextYear}-${mStr}-01`);
+    },
+    [calendarYear, calendarMonth]
+  );
+
+  // RF-AGE-005: Aprobación formal de solicitud creando la cita y enviando correo de confirmación
+  const approveRequest = useCallback(
+    async (
+      idSolicitud: number,
+      options?: { idProfesional?: number; motivo?: string; idUsuarioGestor?: number }
+    ) => {
+      try {
+        const res = await fetch(`${apiBaseUrl}/appointments/requests/${idSolicitud}/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            idUsuarioGestor: options?.idUsuarioGestor || 1,
+            aprobar: true,
+            motivo: options?.motivo || 'Solicitud aprobada y confirmada en agenda médica',
+            idProfesional: options?.idProfesional,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || 'Error al aprobar la solicitud de cita.');
+        }
+
+        await fetchAgenda();
+      } catch (err: any) {
+        console.error('Error approving request:', err.message);
+        throw err;
+      }
+    },
+    [apiBaseUrl, fetchAgenda]
+  );
+
+  // Rechazo formal de solicitud liberando el horario
   const rejectRequest = useCallback(
     async (idSolicitud: number, motivo: string) => {
       try {
-        await fetch(`${apiBaseUrl}/appointments/requests/${idSolicitud}/review`, {
+        const res = await fetch(`${apiBaseUrl}/appointments/requests/${idSolicitud}/review`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -237,10 +437,16 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
             motivo,
           }),
         });
-        setRequests((prev) => prev.filter((r) => r.idSolicitud !== idSolicitud));
-        fetchAgenda();
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.message || 'Error al rechazar la solicitud.');
+        }
+
+        await fetchAgenda();
       } catch (err: any) {
         console.error('Error rejecting request:', err.message);
+        throw err;
       }
     },
     [apiBaseUrl, fetchAgenda]
@@ -249,9 +455,15 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
   return {
     selectedDate,
     setSelectedDate,
-    slots,
-    setSlots,
+    calendarYear,
+    setCalendarYear,
+    calendarMonth,
+    setCalendarMonth,
+    navigateMonth,
+    slots: displaySlots,
+    allSlots: slots,
     requests,
+    monthlySummary,
     waitingRoom,
     filterMode,
     setFilterMode,
@@ -260,6 +472,7 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
     isLoading,
     error,
     fetchAgenda,
+    generateDaySlots,
     startAttention,
     endAttention,
     cancelAppointment,

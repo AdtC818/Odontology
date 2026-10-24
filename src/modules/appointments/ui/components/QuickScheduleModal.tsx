@@ -1,5 +1,5 @@
 // src/modules/appointments/ui/components/QuickScheduleModal.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal } from '../../../../shared/ui/components/Modal';
 import { Button } from '../../../../shared/ui/components/Button';
 import { Input } from '../../../../shared/ui/components/Input';
@@ -74,16 +74,42 @@ export const QuickScheduleModal: React.FC<QuickScheduleModalProps> = ({
     'Consentimiento General de Tratamiento Odontológico y Diagnóstico 3D',
   ]);
 
-  const availableBlocks = [
-    '08:00-08:30',
-    '08:30-09:00',
-    '09:00-09:30',
-    '10:00-10:30',
-    '14:00-14:30',
-    '14:30-15:00',
-    '15:00-15:30',
-    '16:00-16:30',
-  ];
+  const [availableBlocks, setAvailableBlocks] = useState<string[]>([]);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
+
+  // Consulta dinámica a la base de datos de los bloques disponibles (estado = true AND ocupacion = false)
+  useEffect(() => {
+    if (!fecha) return;
+    setIsLoadingSlots(true);
+    fetch(`/api/v1/appointments/available-slots?fecha=${fecha}`)
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((json) => {
+        const rawSlots: any[] = json.data || [];
+        const blocks = rawSlots.map((s: any) => {
+          let cleanInicio = String(s.inicio || '').trim();
+          let cleanFinal = String(s.final || '').trim();
+          const startPart = cleanInicio.includes(' ')
+            ? cleanInicio.split(' ')[1]
+            : cleanInicio.includes('T')
+            ? cleanInicio.split('T')[1]
+            : cleanInicio;
+          const endPart = cleanFinal.includes(' ')
+            ? cleanFinal.split(' ')[1]
+            : cleanFinal.includes('T')
+            ? cleanFinal.split('T')[1]
+            : cleanFinal;
+          return `${startPart.slice(0, 5)}-${endPart.slice(0, 5)}`;
+        });
+        setAvailableBlocks(blocks);
+      })
+      .catch((err) => {
+        console.error('Error fetching available slots in quick schedule modal:', err);
+        setAvailableBlocks([]);
+      })
+      .finally(() => {
+        setIsLoadingSlots(false);
+      });
+  }, [fecha]);
 
   const filteredPatients = patients.filter(
     (p) =>
@@ -293,27 +319,39 @@ export const QuickScheduleModal: React.FC<QuickScheduleModalProps> = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2">
-            {availableBlocks.map((b, idx) => {
-              const isSelected = selectedBlocks.includes(b);
-              return (
-                <button
-                  key={idx}
-                  type="button"
-                  onClick={() => toggleBlockSelection(b)}
-                  className={`min-h-[44px] rounded-xl border text-xs font-bold p-2.5 transition-all text-center ${
-                    isSelected
-                      ? 'border-[#D4AF37] bg-[#FBF6E6] text-[#1E242B] ring-2 ring-[#D4AF37]/40 shadow-xs'
-                      : 'border-[#E2E6EA] bg-white text-[#687380] hover:border-[#CBD2D9]'
-                  }`}
-                >
-                  <span className="block">{b}</span>
-                  <span className="text-[10px] text-[#8F99A3]">
-                    {isSelected ? '✓ Seleccionado' : 'Disponible'}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="pt-2">
+            {isLoadingSlots ? (
+              <div className="py-6 text-center text-xs text-[#8F99A3]">
+                Consultando bloques disponibles en la base de datos...
+              </div>
+            ) : availableBlocks.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[#E2E6EA] bg-[#F8F9FA] p-6 text-center text-xs font-semibold text-[#8F99A3]">
+                No hay horarios disponibles para este día
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 max-h-48 overflow-y-auto pr-1">
+                {availableBlocks.map((b, idx) => {
+                  const isSelected = selectedBlocks.includes(b);
+                  return (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => toggleBlockSelection(b)}
+                      className={`min-h-[44px] rounded-xl border text-xs font-bold p-2.5 transition-all text-center cursor-pointer ${
+                        isSelected
+                          ? 'border-[#D4AF37] bg-[#FBF6E6] text-[#1E242B] ring-2 ring-[#D4AF37]/40 shadow-xs'
+                          : 'border-[#E2E6EA] bg-white text-[#687380] hover:border-[#CBD2D9]'
+                      }`}
+                    >
+                      <span className="block">{b}</span>
+                      <span className="text-[10px] text-[#8F99A3]">
+                        {isSelected ? '✓ Seleccionado' : 'Disponible'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 

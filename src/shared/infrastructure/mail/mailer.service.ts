@@ -362,6 +362,94 @@ export class MailerService implements IMailerPort {
   /**
    * Envía confirmación de solicitud pública de cita recibida (sujeta a confirmación) (RF-AGE-003).
    */
+  /**
+   * Envía notificación de cita asignada / confirmada al doctor (RF-AGE-005).
+   */
+  async sendDoctorAppointmentNotificationEmail(params: {
+    to: string;
+    doctorName: string;
+    patientName: string;
+    fecha: string;
+    hora: string;
+    motivo: string;
+    idCita?: number;
+    telefonoPaciente?: string;
+  }): Promise<{ messageId?: string; previewUrl?: string | null }> {
+    const { to, doctorName, patientName, fecha, hora, motivo, idCita, telefonoPaciente } = params;
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Nueva Cita Asignada - OdontoLeal</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #F8F9FA; margin: 0; padding: 24px; color: #1E242B; }
+    .card { max-width: 560px; margin: 0 auto; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E6EA; border-top: 5px solid #D4AF37; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .logo-badge { display: inline-block; background-color: #111111; color: #D4AF37; font-size: 12px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 14px; border-radius: 999px; }
+    h1 { font-size: 22px; font-weight: 800; color: #1E242B; margin: 16px 0 8px 0; }
+    .details { background-color: #F8F9FA; border: 1px solid #E2E6EA; border-radius: 12px; padding: 18px; margin: 20px 0; }
+    .detail-item { margin: 8px 0; font-size: 14px; }
+    .label { font-weight: bold; color: #687380; }
+    .value { font-weight: 600; color: #1E242B; }
+    .highlight-box { background-color: #ECFDF5; border: 1px solid #A7F3D0; border-radius: 12px; padding: 14px; margin: 16px 0; font-size: 13px; color: #065F46; }
+    .footer { text-align: center; font-size: 12px; color: #8F99A3; margin-top: 24px; border-top: 1px solid #E2E6EA; padding-top: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="text-align: center;">
+      <span class="logo-badge">CONSULTORIO ODONTOLEAL • AGENDA MÉDICA</span>
+      <h1>Nueva Cita Confirmada</h1>
+      <p style="color: #687380; font-size: 14px;">Se ha programado una nueva atención en tu agenda clínica.</p>
+    </div>
+
+    <p>Estimado(a) <strong>${doctorName}</strong>,</p>
+    <p>Te informamos que se ha confirmado una cita en tu agenda médica:</p>
+
+    <div class="details">
+      <div class="detail-item"><span class="label">👤 Paciente:</span> <span class="value">${patientName}</span></div>
+      ${telefonoPaciente ? `<div class="detail-item"><span class="label">📞 Teléfono contacto:</span> <span class="value">${telefonoPaciente}</span></div>` : ''}
+      <div class="detail-item"><span class="label">📅 Fecha:</span> <span class="value">${fecha}</span></div>
+      <div class="detail-item"><span class="label">⏰ Horario:</span> <span class="value">${hora}</span></div>
+      <div class="detail-item"><span class="label">📋 Procedimiento / Motivo:</span> <span class="value">${motivo}</span></div>
+      ${idCita ? `<div class="detail-item"><span class="label">🔢 N° Cita Clínica:</span> <span class="value">#${idCita}</span></div>` : ''}
+    </div>
+
+    <div class="highlight-box">
+      ✅ <strong>Cita Agendada y Notificada:</strong><br>
+      El paciente ha recibido su comprobante por correo electrónico y el espacio en tu agenda se encuentra reservado para esta atención.
+    </div>
+
+    <p style="font-size: 13px; color: #687380;">Puedes consultar la historia clínica previa o gestionar la evolución desde el sistema OdontoLeal.</p>
+
+    <div class="footer">
+      © 2026 Consultorio Odontológico Dr. Eduar Leal Álvarez • Bogotá, Colombia
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    try {
+      const transporter = await this.getTransporter();
+      const info = await transporter.sendMail({
+        from: this.fromAddress,
+        to,
+        subject: `Nueva Cita Asignada - ${fecha} a las ${hora} (${patientName})`,
+        text: `Hola ${doctorName}.\n\nSe te ha asignado una nueva cita con el paciente ${patientName} para el día ${fecha} a las ${hora}.\nMotivo: ${motivo}.\nN° Cita: #${idCita || ''}`,
+        html: htmlContent,
+      });
+
+      const previewUrl = nodemailer.getTestMessageUrl(info) || null;
+      console.log(`📧 Notificación enviada al doctor ${to}. Mensaje ID: ${info.messageId}`);
+      return { messageId: info.messageId, previewUrl };
+    } catch (err: any) {
+      console.error('❌ Error enviando correo de notificación a doctor:', err?.message);
+      return { previewUrl: null };
+    }
+  }
+
   async sendPublicRequestReceivedEmail(params: {
     to: string;
     nombreSolicitante: string;

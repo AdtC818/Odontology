@@ -1,10 +1,15 @@
 // src/modules/appointments/ui/views/PublicBookingPage.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '../../../../shared/ui/components/Button';
 import { Input } from '../../../../shared/ui/components/Input';
 import { Modal } from '../../../../shared/ui/components/Modal';
 import { useAlertModal } from '../../../../shared/ui/hooks/useAlertModal';
 import { Badge } from '../../../../shared/ui/components/Badge';
+
+export interface AvailableSlotItem {
+  label: string;
+  rawInicio: string;
+}
 
 export interface PublicBookingPageProps {
   onNavigateToStaffLogin?: () => void;
@@ -24,9 +29,12 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
   const [correo, setCorreo] = useState('');
   const [motivoConsulta, setMotivoConsulta] = useState('');
 
-  // Fecha y Horario
-  const [selectedDate, setSelectedDate] = useState('2026-10-14');
-  const [selectedTime, setSelectedTime] = useState('08:30 AM');
+  // Fecha y Horario Dinámicos desde Base de Datos (estado = true AND ocupacion = false)
+  const defaultDate = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const [selectedDate, setSelectedDate] = useState(defaultDate);
+  const [availableHours, setAvailableHours] = useState<AvailableSlotItem[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<AvailableSlotItem | null>(null);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
 
   // Modales
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false);
@@ -34,15 +42,52 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { showAlert, AlertModalComponent } = useAlertModal();
 
-  const availableHours = [
-    '08:00 AM',
-    '08:30 AM',
-    '09:00 AM',
-    '10:30 AM',
-    '02:00 PM',
-    '03:30 PM',
-    '04:30 PM',
-  ];
+  // Consulta dinámica de bloques disponibles a la base de datos
+  useEffect(() => {
+    if (!selectedDate) return;
+    setIsLoadingSlots(true);
+    fetch(`/api/v1/appointments/available-slots?fecha=${selectedDate}`)
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((json) => {
+        const rawSlots: any[] = json.data || [];
+        const formatted: AvailableSlotItem[] = rawSlots.map((s: any) => {
+          const clean = String(s.inicio || '').trim();
+          let timePart = clean;
+          if (timePart.includes('T')) {
+            timePart = timePart.split('T')[1];
+          } else if (timePart.includes(' ')) {
+            timePart = timePart.split(' ')[1];
+          }
+          const [hStr, mStr] = timePart.split(':');
+          const h = Number(hStr);
+          const m = (mStr || '00').replace(/\D/g, '').padStart(2, '0');
+          const period = h >= 12 ? 'PM' : 'AM';
+          let h12 = h % 12;
+          if (h12 === 0) h12 = 12;
+          const label = `${h12.toString().padStart(2, '0')}:${m} ${period}`;
+          const rawInicio = clean.includes('T') ? clean.replace('T', ' ').split('.')[0] : clean;
+          return {
+            label,
+            rawInicio,
+          };
+        });
+
+        setAvailableHours(formatted);
+        if (formatted.length > 0) {
+          setSelectedSlot(formatted[0]);
+        } else {
+          setSelectedSlot(null);
+        }
+      })
+      .catch((err) => {
+        console.error('Error al consultar horarios disponibles desde la base de datos:', err);
+        setAvailableHours([]);
+        setSelectedSlot(null);
+      })
+      .finally(() => {
+        setIsLoadingSlots(false);
+      });
+  }, [selectedDate]);
 
   const handlePreConfirm = (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,32 +99,29 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
       });
       return;
     }
+    if (!selectedSlot) {
+      showAlert({
+        title: 'Horario Requerido',
+        message: 'Debe seleccionar un bloque de horario disponible para continuar con la solicitud.',
+        type: 'warning',
+      });
+      return;
+    }
     setIsConfirmModalOpen(true);
   };
 
-  const parseHourTo24 = (timeStr: string): string => {
-    const isPM = timeStr.toUpperCase().includes('PM');
-    const isAM = timeStr.toUpperCase().includes('AM');
-    const clean = timeStr.replace(/AM|PM/gi, '').trim();
-    let [h, m] = clean.split(':').map(Number);
-    if (isPM && h < 12) h += 12;
-    if (isAM && h === 12) h = 0;
-    return `${h.toString().padStart(2, '0')}:${(m || 0).toString().padStart(2, '0')}:00`;
-  };
-
   const handleFinalSubmit = async () => {
+    if (!selectedSlot) return;
     setIsSubmitting(true);
     try {
-      const time24 = parseHourTo24(selectedTime);
-      const bloqueSolicitado = `${selectedDate} ${time24}`;
-
       const payload = {
         nombreSolicitante: nombreCompleto.trim(),
         documentoSolicitante: documentoIdentidad.trim(),
         correoSolicitante: correo.trim().toLowerCase(),
         telefonoSolicitante: telefono.trim(),
         fechaNacimiento: fechaNacimiento.trim() || undefined,
-        bloqueSolicitado,
+        sexo: genero,
+        bloqueSolicitado: selectedSlot.rawInicio,
         descripcion: motivoConsulta.trim() || 'Solicitud de valoración general',
         idProfesional: 1, // Dr. Eduar Leal Álvarez
       };
@@ -99,7 +141,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
         setIsConfirmModalOpen(false);
         showAlert({
           title: 'No se pudo registrar la solicitud',
-          message: errJson.message || 'El bloque horario seleccionado no está disponible o ocurrió un error al procesar la solicitud.',
+          message: errJson.message || 'El bloque horario seleccionado ya no se encuentra disponible. Por favor seleccione otro horario.',
           type: 'error',
         });
         return;
@@ -123,6 +165,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#1E242B] flex flex-col justify-between">
       <AlertModalComponent />
+
       {/* Header Superior del Portal */}
       <header className="w-full border-b border-[#E2E6EA] bg-white px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-2xs">
         <div className="flex items-center gap-3">
@@ -143,7 +186,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
           <button
             type="button"
             onClick={onNavigateToStaffLogin}
-            className="min-h-[40px] rounded-xl border border-[#E2E6EA] px-4 py-2 text-xs font-bold text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6]/40 transition-colors inline-flex items-center gap-2"
+            className="min-h-[40px] rounded-xl border border-[#E2E6EA] px-4 py-2 text-xs font-bold text-[#1E242B] hover:border-[#D4AF37] hover:bg-[#FBF6E6]/40 transition-colors inline-flex items-center gap-2 cursor-pointer"
           >
             <svg className="h-4 w-4 text-[#D4AF37]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
@@ -153,7 +196,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
         )}
       </header>
 
-      {/* Contenedor Principal (Page 5) */}
+      {/* Contenedor Principal */}
       <main className="max-w-4xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         <div className="text-center space-y-2">
           <span className="inline-flex items-center rounded-full bg-[#FBF6E6] border border-[#EAD89B] px-3.5 py-1 text-xs font-extrabold uppercase tracking-wider text-[#8F721A]">
@@ -284,37 +327,62 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
                 </p>
               </div>
 
-              {/* Horario Disponible */}
+              {/* Horario Disponible Dinámico desde Base de Datos */}
               <div className="space-y-2 pt-2">
-                <label className="block text-xs font-bold text-[#687380]">
-                  Horario Disponible:
-                </label>
-                <div className="grid grid-cols-2 gap-2.5">
-                  {availableHours.map((h, idx) => {
-                    const isSelected = selectedTime === h;
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setSelectedTime(h)}
-                        className={`min-h-[44px] rounded-xl border text-xs font-bold p-2.5 transition-all text-center flex items-center justify-between px-3 ${
-                          isSelected
-                            ? 'border-[#D4AF37] bg-[#FBF6E6] text-[#1E242B] ring-2 ring-[#D4AF37]/50 shadow-xs'
-                            : 'border-[#E2E6EA] bg-white text-[#687380] hover:border-[#CBD2D9]'
-                        }`}
-                      >
-                        <span>{h}</span>
-                        {isSelected && <span className="text-[#D4AF37]">✓</span>}
-                      </button>
-                    );
-                  })}
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-[#687380]">
+                    Horario Disponible:
+                  </label>
+                  {isLoadingSlots && (
+                    <span className="text-[11px] font-medium text-[#D4AF37] animate-pulse">
+                      Consultando base de datos...
+                    </span>
+                  )}
                 </div>
+
+                {isLoadingSlots ? (
+                  <div className="rounded-2xl border border-[#E2E6EA] bg-[#F8F9FA] p-6 text-center text-xs text-[#8F99A3]">
+                    Cargando horarios disponibles...
+                  </div>
+                ) : availableHours.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-[#E2E6EA] bg-[#F8F9FA] p-6 text-center space-y-1">
+                    <span className="text-xl">📅</span>
+                    <p className="text-xs font-bold text-[#687380]">
+                      No hay horarios disponibles para este día
+                    </p>
+                    <p className="text-[11px] text-[#8F99A3]">
+                      Por favor seleccione otra fecha en el calendario.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
+                    {availableHours.map((slot, idx) => {
+                      const isSelected = selectedSlot?.rawInicio === slot.rawInicio;
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setSelectedSlot(slot)}
+                          className={`min-h-[44px] rounded-xl border text-xs font-bold p-2.5 transition-all text-center flex items-center justify-between px-3 cursor-pointer ${
+                            isSelected
+                              ? 'border-[#D4AF37] bg-[#FBF6E6] text-[#1E242B] ring-2 ring-[#D4AF37]/50 shadow-xs'
+                              : 'border-[#E2E6EA] bg-white text-[#687380] hover:border-[#CBD2D9] hover:bg-[#F8F9FA]'
+                          }`}
+                        >
+                          <span>{slot.label}</span>
+                          {isSelected && <span className="text-[#D4AF37] font-bold">✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               <div className="pt-6">
                 <Button
                   type="submit"
                   variant="primary"
+                  disabled={availableHours.length === 0 || !selectedSlot || isLoadingSlots}
                   className="w-full text-base py-3"
                   rightIcon={<span>→</span>}
                 >
@@ -325,7 +393,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
           </div>
         </form>
 
-        {/* Tarjetas informativas de pie (Page 5) */}
+        {/* Tarjetas informativas de pie */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="rounded-2xl border border-[#E2E6EA] bg-white p-4 space-y-1 text-xs">
             <span className="text-base">📅</span>
@@ -358,7 +426,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
         © 2026 OdontoLeal • Presidencia Médica Dr. Eduar Leal • Todos los derechos reservados.
       </footer>
 
-      {/* Modal 1: ¿Confirmar tu Solicitud de Cita? (Page 4) */}
+      {/* Modal 1: ¿Confirmar tu Solicitud de Cita? */}
       <Modal
         isOpen={isConfirmModalOpen}
         onClose={() => setIsConfirmModalOpen(false)}
@@ -385,7 +453,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
           <div className="rounded-2xl border border-[#E2E6EA] p-3.5 bg-[#F8F9FA] space-y-1">
             <span className="text-[10px] font-extrabold uppercase text-[#8F99A3]">Fecha y Hora</span>
             <p className="font-extrabold text-[#1E242B] text-sm">
-              {selectedDate} • {selectedTime}
+              {selectedDate} • {selectedSlot?.label || ''}
             </p>
           </div>
 
@@ -403,7 +471,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
         </div>
       </Modal>
 
-      {/* Modal 2: ¡Solicitud Confirmada! (Page 3) */}
+      {/* Modal 2: ¡Solicitud Confirmada! */}
       <Modal
         isOpen={isSuccessModalOpen}
         onClose={() => setIsSuccessModalOpen(false)}
@@ -435,7 +503,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
           <div className="rounded-2xl border border-[#E2E6EA] p-4 bg-[#F8F9FA] space-y-2">
             <div>
               <span className="text-[10px] font-bold text-[#8F99A3]">FECHA Y HORA</span>
-              <p className="font-bold text-[#1E242B]">{selectedDate} • {selectedTime}</p>
+              <p className="font-bold text-[#1E242B]">{selectedDate} • {selectedSlot?.label || ''}</p>
             </div>
             <div>
               <span className="text-[10px] font-bold text-[#8F99A3]">PACIENTE</span>
