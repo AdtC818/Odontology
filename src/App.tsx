@@ -260,6 +260,27 @@ export const App: React.FC = () => {
               if (matched) setSelectedPatient(matched);
               setActiveConsultationContext({ idPaciente, idCita });
             }}
+            onNavigateToPatientProfile={(idPaciente) => {
+              const matched = patients.find((p) => p.idPaciente === idPaciente);
+              if (matched) {
+                setSelectedPatient(matched);
+                setPatientSubView('PROFILE');
+                setInternalView('PATIENTS');
+              } else {
+                fetch(`/api/v1/patients/${idPaciente}`)
+                  .then((res) => (res.ok ? res.json() : null))
+                  .then((json) => {
+                    if (json?.data) {
+                      setSelectedPatient(json.data);
+                      setPatientSubView('PROFILE');
+                      setInternalView('PATIENTS');
+                    }
+                  })
+                  .catch((err) => {
+                    console.error('Error al redirigir al perfil del paciente:', err);
+                  });
+              }
+            }}
           />
         )
       )}

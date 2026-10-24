@@ -176,7 +176,7 @@ export class AppointmentsController {
   reviewRequest = async (req: Request, res: Response): Promise<void> => {
     try {
       const idSolicitud = Number(req.params.id);
-      const { idUsuarioGestor, aprobar, motivo, idPaciente, idProfesional } = req.body;
+      const { idUsuarioGestor, aprobar, motivo, idPaciente, idProfesional, selectedBlocks } = req.body;
       const result: any = await this.appointmentRepo.reviewRequest({
         idSolicitud,
         idUsuarioGestor: idUsuarioGestor || 1,
@@ -184,14 +184,14 @@ export class AppointmentsController {
         motivo: motivo || (aprobar ? 'Solicitud aprobada y confirmada en agenda médica' : 'Solicitud rechazada'),
         idPaciente,
         idProfesional,
+        selectedBlocks,
       });
 
       // Notificación por correo al solicitante al aprobar (RF-AGE-005, RQNF-FIA-004)
       if (result?.correoPaciente && (aprobar !== false)) {
         try {
-          const parts = String(result.fechaHora || '').split(' ');
-          const fecha = parts[0] || 'Por confirmar';
-          const hora = (parts[1] || '').slice(0, 5) || '15:30';
+          const fecha = result.fecha || String(result.fechaHora || '').split(' ')[0] || 'Por confirmar';
+          const hora = result.hora || '15:30';
 
           await this.mailerService.sendAppointmentConfirmationEmail({
             to: result.correoPaciente,
@@ -210,9 +210,8 @@ export class AppointmentsController {
         // Notificación por correo al doctor asignado (RF-AGE-005, RQNF-FIA-004)
         if (result?.correoDoctor) {
           try {
-            const parts = String(result.fechaHora || '').split(' ');
-            const fecha = parts[0] || 'Por confirmar';
-            const hora = (parts[1] || '').slice(0, 5) || '15:30';
+            const fecha = result.fecha || String(result.fechaHora || '').split(' ')[0] || 'Por confirmar';
+            const hora = result.hora || '15:30';
 
             await this.mailerService.sendDoctorAppointmentNotificationEmail({
               to: result.correoDoctor,

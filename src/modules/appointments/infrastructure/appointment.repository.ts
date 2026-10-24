@@ -240,6 +240,7 @@ export class AppointmentRepository {
     motivo: string;
     idPaciente?: number;
     idProfesional?: number;
+    selectedBlocks?: string[];
   }) {
     return db.withTransaction(async (client) => {
       const solRes = await client.query(
@@ -354,11 +355,57 @@ export class AppointmentRepository {
         );
       }
 
-      // Asegurar que el bloque horario queda ocupado
-      await client.query(
-        `UPDATE public.bloques_horario SET ocupacion = TRUE WHERE inicio = $1;`,
-        [solicitud.bloque_solicitado]
-      );
+      // Bloques a ocupar y asociar a la cita
+      const rawBlocks =
+        params.selectedBlocks && params.selectedBlocks.length > 0
+          ? params.selectedBlocks
+          : [solicitud.bloque_solicitado];
+      const blocksToOccupy = rawBlocks.map((b) => String(b).replace('T', ' ').slice(0, 19));
+
+      // Liberar el bloque originalmente solicitado si el doctor seleccionó otros bloques
+      const originalBlockClean = String(solicitud.bloque_solicitado).replace('T', ' ').slice(0, 19);
+      if (!blocksToOccupy.includes(originalBlockClean)) {
+        await client.query(
+          `UPDATE public.bloques_horario SET ocupacion = FALSE WHERE inicio = $1;`,
+          [solicitud.bloque_solicitado]
+        );
+      }
+
+      // Eliminar vínculos previos en bloques_citas para esta cita
+      await client.query(`DELETE FROM public.bloques_citas WHERE id_cita = $1;`, [cita.id_cita]);
+
+      // Asegurar que cada bloque seleccionado existe, queda ocupado y vinculado a la cita
+      for (const bInicio of blocksToOccupy) {
+        const bStartDate = new Date(bInicio);
+        const bEndDate = new Date(bStartDate.getTime() + 30 * 60 * 1000);
+        const bEndStr = `${bEndDate.getFullYear()}-${(bEndDate.getMonth() + 1).toString().padStart(2, '0')}-${bEndDate.getDate().toString().padStart(2, '0')} ${bEndDate.getHours().toString().padStart(2, '0')}:${bEndDate.getMinutes().toString().padStart(2, '0')}:00`;
+
+        await client.query(
+          `INSERT INTO public.bloques_horario (inicio, final, estado, ocupacion)
+           VALUES ($1, $2, TRUE, TRUE)
+           ON CONFLICT (inicio) DO UPDATE SET ocupacion = TRUE, estado = TRUE;`,
+          [bInicio, bEndStr]
+        );
+
+        await client.query(
+          `INSERT INTO public.bloques_citas (id_bloque, id_cita)
+           VALUES ($1, $2)
+           ON CONFLICT DO NOTHING;`,
+          [bInicio, cita.id_cita]
+        );
+      }
+
+      // Cálculo del rango horario para la confirmación formal
+      const sortedBlocks = [...blocksToOccupy].sort();
+      const firstBlockStr = sortedBlocks[0];
+      const lastBlockStr = sortedBlocks[sortedBlocks.length - 1];
+      const lastDate = new Date(lastBlockStr);
+      const endDate = new Date(lastDate.getTime() + 30 * 60 * 1000);
+      const endHHmm = `${endDate.getHours().toString().padStart(2, '0')}:${endDate.getMinutes().toString().padStart(2, '0')}`;
+      const firstParts = firstBlockStr.split(' ');
+      const fechaCita = firstParts[0];
+      const startHHmm = (firstParts[1] || '').slice(0, 5);
+      const horaRango = `${startHHmm} - ${endHHmm}`;
 
       // Obtener datos del doctor para notificación
       const docRes = await client.query(
@@ -380,7 +427,9 @@ export class AppointmentRepository {
         idCita: cita.id_cita,
         correoPaciente: solicitud.correo_solicitante,
         nombrePaciente: solicitud.nombre_solicitante,
-        fechaHora: solicitud.bloque_solicitado,
+        fechaHora: `${fechaCita} ${horaRango}`,
+        fecha: fechaCita,
+        hora: horaRango,
         nombreDoctor: doctorNombre,
         correoDoctor: doctorCorreo,
         telefonoPaciente: solicitud.telefono_solicitante,
@@ -539,7 +588,7 @@ export class AppointmentRepository {
       INNER JOIN public.paciente p ON c.id_paciente = p.id_paciente
       INNER JOIN public.usuario u ON c.id_usuario = u.id_usuario
       LEFT JOIN public.bloques_citas bc ON c.id_cita = bc.id_cita
-      LEFT JOIN public.solicitud_cita sc ON (sc.bloque_solicitado = bc.id_bloque)
+      LEFT JOIN public.solicitud_cita sc ON (sc.bloque_solicitado = bc.id_bloque AND sc.estado = true)
       LEFT JOIN public.historial_cita hc ON c.id_cita = hc.id_cita
       ${where}
       GROUP BY c.id_cita, p.id_paciente, u.id_usuario, sc.id_solicitud, sc.nombre_solicitante,

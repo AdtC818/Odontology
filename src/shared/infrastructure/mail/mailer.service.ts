@@ -17,11 +17,14 @@ export class MailerService implements IMailerPort {
   private readonly fromAddress: string;
 
   constructor(private readonly options?: MailerServiceOptions) {
+    const defaultFrom = process.env.GMAIL_USER
+      ? `"Consultorio OdontoLeal" <${process.env.GMAIL_USER}>`
+      : '"Consultorio OdontoLeal" <notificaciones@odontoleal.com>';
     this.fromAddress =
       options?.from ||
       process.env.EMAIL_FROM ||
       process.env.SMTP_FROM ||
-      '"Consultorio OdontoLeal" <notificaciones@odontoleal.com>';
+      defaultFrom;
   }
 
   /**

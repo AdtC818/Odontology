@@ -3,14 +3,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { CalendarTimeSlot } from '../components/WeeklyCalendarGrid';
 import { RequestDetailData } from '../views/AppointmentRequestDetailPage';
 
-export interface WaitingRoomPatient {
-  idCita: number;
-  nombrePaciente: string;
-  horaCita: string;
-  doctorNombre: string;
-  minutosEspera: number;
-}
-
 export interface MonthlyDaySummaryItem {
   fecha: string;
   dia: number;
@@ -25,6 +17,7 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
   const [calendarYear, setCalendarYear] = useState(2026);
   const [calendarMonth, setCalendarMonth] = useState(10); // 1 = Enero ... 12 = Diciembre
   const [slots, setSlots] = useState<CalendarTimeSlot[]>([]);
+  const [agendaItems, setAgendaItems] = useState<any[]>([]);
   const [requests, setRequests] = useState<RequestDetailData[]>([]);
   const [monthlySummary, setMonthlySummary] = useState<MonthlyDaySummaryItem[]>([]);
   const [filterMode, setFilterMode] = useState<'appointments_only' | 'all' | 'requests_only'>(
@@ -84,6 +77,7 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
       const agendaRes = await fetch(`${apiBaseUrl}/appointments/agenda`);
       const agendaJson = agendaRes.ok ? await agendaRes.json() : { data: [] };
       const agendaItems: any[] = agendaJson.data || [];
+      setAgendaItems(agendaItems);
 
       // 2. Obtener solicitudes pendientes registradas en solicitud_cita
       const requestsRes = await fetch(`${apiBaseUrl}/appointments/requests`);
@@ -173,8 +167,7 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
           // Verificar si corresponde a una solicitud pendiente
           const isPending =
             appt.estado === 'Solicitada' ||
-            appt.estado === 'Pendiente de confirmación' ||
-            Boolean(appt.idSolicitud);
+            appt.estado === 'Pendiente de confirmación';
 
           unifiedSlots.push({
             idBloque: slotIndex++,
@@ -249,17 +242,6 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
   useEffect(() => {
     fetchAgenda();
   }, [fetchAgenda]);
-
-  // Sala de espera dinámica calculada desde las citas reales en base de datos con estado 'En espera'
-  const waitingRoom: WaitingRoomPatient[] = slots
-    .filter((s) => s.estadoCita === 'En espera')
-    .map((s) => ({
-      idCita: s.idCita!,
-      nombrePaciente: s.pacienteNombre || 'Paciente en sala',
-      horaCita: s.horaInicio,
-      doctorNombre: s.doctorNombre || 'Dr. Mateo Gómez',
-      minutosEspera: 8,
-    }));
 
   // Filtrado de citas por doctor si hay texto en doctorFilter
   const displaySlots = slots.filter((slot) => {
@@ -396,7 +378,12 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
   const approveRequest = useCallback(
     async (
       idSolicitud: number,
-      options?: { idProfesional?: number; motivo?: string; idUsuarioGestor?: number }
+      options?: {
+        idProfesional?: number;
+        motivo?: string;
+        idUsuarioGestor?: number;
+        selectedBlocks?: string[];
+      }
     ) => {
       try {
         const res = await fetch(`${apiBaseUrl}/appointments/requests/${idSolicitud}/review`, {
@@ -407,6 +394,7 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
             aprobar: true,
             motivo: options?.motivo || 'Solicitud aprobada y confirmada en agenda médica',
             idProfesional: options?.idProfesional,
+            selectedBlocks: options?.selectedBlocks,
           }),
         });
 
@@ -462,9 +450,9 @@ export function useRealtimeAgenda(apiBaseUrl = '/api/v1') {
     navigateMonth,
     slots: displaySlots,
     allSlots: slots,
+    agendaItems,
     requests,
     monthlySummary,
-    waitingRoom,
     filterMode,
     setFilterMode,
     doctorFilter,

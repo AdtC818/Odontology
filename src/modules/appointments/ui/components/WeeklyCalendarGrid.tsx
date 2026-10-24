@@ -156,13 +156,12 @@ export const WeeklyCalendarGrid: React.FC<WeeklyCalendarGridProps> = ({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="max-h-[calc(100vh-270px)] min-h-[520px] overflow-y-auto pr-2 space-y-3.5">
       {filteredSlots.map((slot) => {
-        const hasAppointment = Boolean(slot.idCita);
         const isPending =
           slot.estadoCita === 'Pendiente de confirmación' ||
-          slot.estadoCita === 'Solicitada' ||
-          Boolean(slot.idSolicitud);
+          slot.estadoCita === 'Solicitada';
+        const hasAppointment = Boolean(slot.idCita) || Boolean(slot.pacienteNombre);
 
         // CASO 1: BLOQUE CON CITA O SOLICITUD ASIGNADA (Imagen 3)
         if (hasAppointment || isPending) {

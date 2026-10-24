@@ -12,11 +12,13 @@ import { useAlertModal } from '../../../../shared/ui/hooks/useAlertModal';
 export interface InternalAgendaPageProps {
   onStartAttention?: (idCita: number, idPaciente: number) => void;
   onOpenConsultationWorkspace?: (patientId: number, idCita: number) => void;
+  onNavigateToPatientProfile?: (idPaciente: number) => void;
 }
 
 export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
   onStartAttention,
   onOpenConsultationWorkspace,
+  onNavigateToPatientProfile,
 }) => {
   const {
     selectedDate,
@@ -26,9 +28,9 @@ export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
     navigateMonth,
     generateDaySlots,
     slots,
+    agendaItems,
     requests,
     monthlySummary,
-    waitingRoom,
     filterMode,
     setFilterMode,
     doctorFilter,
@@ -158,18 +160,21 @@ export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
   const handleSelectConfirmedSlot = (slot: CalendarTimeSlot) => {
     if (!slot.idCita) return;
 
+    const realAppt = agendaItems.find((a) => a.idCita === slot.idCita);
+
     setActiveAppointmentDetail({
       idCita: slot.idCita,
-      idPaciente: 1,
-      nombrePaciente: slot.pacienteNombre || 'Paciente',
-      documentoIdentidad: slot.pacienteDocumento || '1020456789',
-      telefono: slot.pacienteTelefono || '+57 312 456 7890',
-      correo: slot.pacienteCorreo || 'paciente@odontoleal.com',
-      titulo: slot.tratamiento || 'Valoración Odontológica',
+      idPaciente: realAppt?.idPaciente || 1,
+      nombrePaciente: realAppt?.nombrePaciente || slot.pacienteNombre || 'Paciente',
+      documentoIdentidad: realAppt?.documentoPaciente || slot.pacienteDocumento || '1020456789',
+      telefono: realAppt?.telefonoPaciente || slot.pacienteTelefono || '+57 312 456 7890',
+      correo: realAppt?.correoPaciente || slot.pacienteCorreo || 'paciente@odontoleal.com',
+      titulo: realAppt?.titulo || slot.tratamiento || 'Valoración para Implante Dental',
       descripcion:
+        realAppt?.descripcion ||
         'Evaluación de densidad ósea mediante tomografía CBCT, toma de impresiones digitales 3D y diseño de la guía quirúrgica para osteointegración.',
-      doctorNombre: slot.doctorNombre || 'Dr. Mateo Gómez',
-      idDoctor: 101,
+      doctorNombre: realAppt?.nombreProfesional || slot.doctorNombre || 'Dr. Mateo Gómez',
+      idDoctor: realAppt?.idProfesional || 101,
       fecha: selectedDate,
       horaInicio: slot.horaInicio,
       horaFin: slot.horaFin,
@@ -199,9 +204,14 @@ export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
   };
 
   // Aprobación de la solicitud desde el Detalle (Imagen 1)
-  const handleApproveRequest = async (idSolicitud: number, idDoctor?: number, motivo?: string) => {
+  const handleApproveRequest = async (
+    idSolicitud: number,
+    idDoctor?: number,
+    motivo?: string,
+    selectedBlocks?: string[]
+  ) => {
     try {
-      await approveRequest(idSolicitud, { idProfesional: idDoctor, motivo });
+      await approveRequest(idSolicitud, { idProfesional: idDoctor, motivo, selectedBlocks });
       showAlert({
         title: '¡Cita Creada y Confirmada!',
         message:
@@ -305,6 +315,7 @@ export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
       <AppointmentDetailPage
         appointment={activeAppointmentDetail}
         onBack={() => setViewMode('AGENDA')}
+        onNavigateToPatientProfile={onNavigateToPatientProfile}
         onStartAttention={(idCita, idPaciente) => {
           startAttention(idCita);
           onStartAttention?.(idCita, idPaciente);
@@ -523,52 +534,6 @@ export const InternalAgendaPage: React.FC<InternalAgendaPageProps> = ({
               </div>
             );
           })()}
-
-          {/* Widget Sala de Espera (Imagen 3) */}
-          <div className="rounded-3xl border border-[#E2E6EA] bg-white p-5 shadow-xs space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[#E2E6EA]">
-              <div className="flex items-center gap-2">
-                <span className="text-base text-[#D4AF37]">🚪</span>
-                <h3 className="text-sm font-extrabold text-[#1E242B]">Sala de Espera</h3>
-              </div>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A]">
-                {waitingRoom.length} paciente{waitingRoom.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-
-            {waitingRoom.length === 0 ? (
-              <p className="text-xs text-[#8F99A3] py-2 text-center">
-                No hay pacientes en sala de espera en este momento.
-              </p>
-            ) : (
-              waitingRoom.map((p) => (
-                <div
-                  key={p.idCita}
-                  className="rounded-2xl border border-[#E2E6EA] bg-[#F8F9FA] p-3.5 flex items-center justify-between gap-3 shadow-2xs"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <div className="h-10 w-10 rounded-full bg-[#111827] text-white font-extrabold text-xs flex items-center justify-center shrink-0">
-                        JM
-                      </div>
-                      <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-[#D4AF37] border-2 border-white"></span>
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-extrabold text-[#1E242B]">{p.nombrePaciente}</h4>
-                      <p className="text-[11px] text-[#687380] mt-0.5">
-                        Cita: {p.horaCita} • {p.doctorNombre.replace('Dr. ', 'Dr. ')}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className="text-xs font-extrabold text-[#D4AF37]">
-                      Esperando {p.minutosEspera} min
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
         </div>
 
         {/* Columna Derecha (8 columnas): Barra de Navegación del Día y Bloques de Horario */}

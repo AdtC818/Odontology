@@ -42,11 +42,11 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { showAlert, AlertModalComponent } = useAlertModal();
 
-  // Consulta dinámica de bloques disponibles a la base de datos
-  useEffect(() => {
-    if (!selectedDate) return;
+  // Función reutilizable para consultar bloques disponibles desde la base de datos
+  const loadSlots = (dateStr: string) => {
+    if (!dateStr) return;
     setIsLoadingSlots(true);
-    fetch(`/api/v1/appointments/available-slots?fecha=${selectedDate}`)
+    fetch(`/api/v1/appointments/available-slots?fecha=${dateStr}`)
       .then((res) => (res.ok ? res.json() : { data: [] }))
       .then((json) => {
         const rawSlots: any[] = json.data || [];
@@ -87,7 +87,28 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
       .finally(() => {
         setIsLoadingSlots(false);
       });
+  };
+
+  // Consulta dinámica de bloques disponibles al cambiar la fecha
+  useEffect(() => {
+    loadSlots(selectedDate);
   }, [selectedDate]);
+
+  // Limpiar el formulario al aceptar el modal de confirmación final
+  const handleCloseSuccessModal = () => {
+    setIsSuccessModalOpen(false);
+    setNombreCompleto('');
+    setDocumentoIdentidad('');
+    setGenero('Femenino');
+    setFechaNacimiento('');
+    setTelefono('');
+    setCorreo('');
+    setMotivoConsulta('');
+    setSelectedSlot(null);
+    if (selectedDate) {
+      loadSlots(selectedDate);
+    }
+  };
 
   const handlePreConfirm = (e: React.FormEvent) => {
     e.preventDefault();
@@ -474,7 +495,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
       {/* Modal 2: ¡Solicitud Confirmada! */}
       <Modal
         isOpen={isSuccessModalOpen}
-        onClose={() => setIsSuccessModalOpen(false)}
+        onClose={handleCloseSuccessModal}
         title={
           <div className="text-center w-full">
             <div className="h-12 w-12 rounded-full bg-[#E6F4EA] text-[#137333] flex items-center justify-center text-xl mx-auto mb-2">
@@ -489,7 +510,7 @@ export const PublicBookingPage: React.FC<PublicBookingPageProps> = ({
           <Button
             variant="primary"
             className="w-full"
-            onClick={() => setIsSuccessModalOpen(false)}
+            onClick={handleCloseSuccessModal}
           >
             Entendido / Aceptar ✓
           </Button>

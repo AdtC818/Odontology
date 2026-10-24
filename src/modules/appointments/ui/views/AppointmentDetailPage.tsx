@@ -1,5 +1,5 @@
 // src/modules/appointments/ui/views/AppointmentDetailPage.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '../../../../shared/ui/components/Button';
 import { Badge } from '../../../../shared/ui/components/Badge';
 import { useAlertModal } from '../../../../shared/ui/hooks/useAlertModal';
@@ -31,6 +31,7 @@ export interface AppointmentDetailPageData {
 export interface AppointmentDetailPageProps {
   appointment: AppointmentDetailPageData;
   onBack: () => void;
+  onNavigateToPatientProfile?: (idPaciente: number) => void;
   onStartAttention?: (idCita: number, idPaciente: number) => void;
   onMarkNoShow?: (idCita: number, motivo: string) => Promise<void> | void;
   onCancelAppointment?: (idCita: number, motivo: string) => Promise<void> | void;
@@ -40,6 +41,7 @@ export interface AppointmentDetailPageProps {
 export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
   appointment,
   onBack,
+  onNavigateToPatientProfile,
   onStartAttention,
   onMarkNoShow,
   onCancelAppointment,
@@ -49,9 +51,91 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
   const [cancelReasonTag, setCancelReasonTag] = useState('');
   const [cancelReasonText, setCancelReasonText] = useState('');
   const [isConsentModalOpen, setIsConsentModalOpen] = useState(false);
-  const [selectedConsents, setSelectedConsents] = useState<number[]>([1, 2]);
+  const [selectedConsents, setSelectedConsents] = useState<number[]>([]);
+
+  // Datos dinámicos cargados desde base de datos
+  const [clinicalHistories, setClinicalHistories] = useState<any[]>([]);
+  const [isLoadingHistories, setIsLoadingHistories] = useState(false);
+  const [consentItems, setConsentItems] = useState<any[]>([]);
+  const [isLoadingConsents, setIsLoadingConsents] = useState(false);
+  const [availableTemplates, setAvailableTemplates] = useState<any[]>([]);
 
   const { showAlert, AlertModalComponent } = useAlertModal();
+
+  // 1. Cargar historial clínico real del paciente desde la base de datos
+  useEffect(() => {
+    if (!appointment.idPaciente) return;
+    setIsLoadingHistories(true);
+    fetch(`/api/v1/clinical-records/patient/${appointment.idPaciente}`)
+      .then((res) => (res.ok ? res.json() : { data: {} }))
+      .then((json) => {
+        const hist: any[] = json.data?.historial || [];
+        const formatted = hist.map((item: any, idx: number) => {
+          let dateStr = 'Fecha no registrada';
+          if (item.fechaHoraRegistro) {
+            try {
+              const d = new Date(item.fechaHoraRegistro);
+              const months = [
+                'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+              ];
+              dateStr = `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+            } catch {
+              dateStr = item.fechaHoraRegistro;
+            }
+          }
+          return {
+            id: item.idCita || idx,
+            title:
+              item.motivoConsulta ||
+              item.procedimientoRealizado ||
+              item.tratamiento ||
+              `Consulta Odontológica #${item.idCita || idx + 1}`,
+            fecha: dateStr,
+            doctor: item.profesionalResponsable || appointment.doctorNombre,
+          };
+        });
+        setClinicalHistories(formatted);
+      })
+      .catch((err) => {
+        console.error('Error cargando historial clínico del paciente:', err);
+        setClinicalHistories([]);
+      })
+      .finally(() => {
+        setIsLoadingHistories(false);
+      });
+  }, [appointment.idPaciente, appointment.doctorNombre]);
+
+  // 2. Cargar consentimientos informados reales del paciente desde la base de datos
+  useEffect(() => {
+    if (!appointment.idPaciente) return;
+    setIsLoadingConsents(true);
+    fetch(`/api/v1/consents/patient/${appointment.idPaciente}`)
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((json) => {
+        const raw: any[] = json.data || [];
+        setConsentItems(raw);
+      })
+      .catch((err) => {
+        console.error('Error cargando consentimientos del paciente:', err);
+        setConsentItems([]);
+      })
+      .finally(() => {
+        setIsLoadingConsents(false);
+      });
+  }, [appointment.idPaciente]);
+
+  // 3. Cargar plantillas de consentimientos para modal de adjuntar
+  useEffect(() => {
+    fetch('/api/v1/consents/templates')
+      .then((res) => (res.ok ? res.json() : { data: [] }))
+      .then((json) => {
+        setAvailableTemplates(json.data || []);
+      })
+      .catch(() => {
+        setAvailableTemplates([]);
+      });
+  }, []);
 
   const handleConfirmCancel = () => {
     const fullReason = [cancelReasonTag, cancelReasonText].filter(Boolean).join(': ');
@@ -67,18 +151,12 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
     setIsCancelModalOpen(false);
   };
 
-  const clinicalHistories = [
-    { title: 'Evolución Periodoncia y Diagnóstico General', fecha: '12 Septiembre 2026' },
-    { title: 'Radiografía Panorámica y Planificación de Implante', fecha: '04 Octubre 2026' },
-    { title: 'Limpieza y Profilaxis Profunda', fecha: '15 Mayo 2026' },
-    { title: 'Evaluación de Oclusión y Articulación Temporomandibular', fecha: '18 Enero 2026' },
-  ];
-
-  const consentItems = [
-    { id: 1, title: 'Consentimiento para Cirugía de Implante Dental y Regeneración Ósea', category: 'Implantología / Cirugía Oral', tag: 'Obligatorio para intervención quirúrgica' },
-    { id: 2, title: 'Consentimiento Informado para Anestesia Local y Sedación Consciente', category: 'Procedimientos Quirúrgicos', tag: 'Protocolo de sedación ambulatoria' },
-    { id: 3, title: 'Consentimiento General de Tratamiento Odontológico y Diagnóstico 3D', category: 'General', tag: 'Adherencia al plan clínico básico' },
-  ];
+  const getInitials = (name: string) => {
+    if (!name) return 'P';
+    const parts = name.trim().split(' ');
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 animate-fadeIn">
@@ -89,7 +167,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 text-xs font-bold text-[#687380] hover:text-[#1E242B] transition-colors"
+          className="inline-flex items-center gap-2 text-xs font-bold text-[#687380] hover:text-[#1E242B] transition-colors cursor-pointer"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -110,7 +188,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
             <div>
               <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="text-xl sm:text-2xl font-extrabold text-[#1E242B]">
-                  {appointment.titulo || 'Valoración para Implante Dental'}
+                  {appointment.titulo || 'Valoración Odontológica'}
                 </h1>
                 <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-semibold bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0]">
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -123,17 +201,17 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
               <div className="flex items-center gap-2 mt-1.5 text-xs text-[#687380] font-medium">
                 <span className="text-[#D4AF37]">🕒</span>
                 <span>
-                  Sábado 24 Octubre 2026 • {appointment.horaInicio} - {appointment.horaFin} hrs ({appointment.sillon || 'Gabinete 02'})
+                  {appointment.fecha} • {appointment.horaInicio} - {appointment.horaFin} hrs ({appointment.sillon || 'Gabinete 02'})
                 </span>
               </div>
 
               <p className="mt-3 text-xs sm:text-sm text-[#4B5563] leading-relaxed max-w-3xl">
-                {appointment.descripcion || 'Evaluación de densidad ósea mediante tomografía CBCT, toma de impresiones digitales 3D y diseño de la guía quirúrgica para osteointegración.'}
+                {appointment.descripcion || 'Valoración clínica y diagnóstico general odontológico.'}
               </p>
 
               <div className="mt-4 flex items-center gap-2.5">
                 <div className="h-7 w-7 rounded-full bg-[#111827] text-white font-bold text-xs flex items-center justify-center shrink-0">
-                  MG
+                  {getInitials(appointment.doctorNombre)}
                 </div>
                 <span className="text-xs text-[#687380]">
                   Doctor encargado: <strong className="text-[#1E242B]">{appointment.doctorNombre}</strong>
@@ -148,7 +226,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
               <button
                 type="button"
                 onClick={() => onStartAttention?.(appointment.idCita, appointment.idPaciente)}
-                className="px-4 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#C29E2F] text-black text-xs font-extrabold flex items-center gap-1.5 shadow-xs transition-all"
+                className="px-4 py-2 rounded-xl bg-[#D4AF37] hover:bg-[#C29E2F] text-black text-xs font-extrabold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
               >
                 <span>▶</span> Iniciar Cita
               </button>
@@ -156,7 +234,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
 
             <button
               type="button"
-              className="px-3 py-2 rounded-xl border border-[#E2E6EA] bg-white text-[#1E242B] hover:bg-[#F3F4F6] text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="px-3 py-2 rounded-xl border border-[#E2E6EA] bg-white text-[#1E242B] hover:bg-[#F3F4F6] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <span>✏</span> Editar Cita
             </button>
@@ -164,7 +242,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
             <button
               type="button"
               onClick={() => onMarkNoShow?.(appointment.idCita, 'El paciente no se presentó')}
-              className="px-3 py-2 rounded-xl border border-[#E2E6EA] bg-white text-[#1E242B] hover:bg-[#F3F4F6] text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="px-3 py-2 rounded-xl border border-[#E2E6EA] bg-white text-[#1E242B] hover:bg-[#F3F4F6] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <svg className="w-3.5 h-3.5 text-[#687380]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -175,7 +253,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
             <button
               type="button"
               onClick={() => setIsCancelModalOpen(true)}
-              className="px-3 py-2 rounded-xl border border-[#FCA5A5] bg-white text-[#DC2626] hover:bg-[#FEF2F2] text-xs font-bold flex items-center gap-1.5 transition-colors"
+              className="px-3 py-2 rounded-xl border border-[#FCA5A5] bg-[#FEF2F2] text-[#DC2626] hover:bg-[#FEE2E2] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <span>✕</span> Cancelar Cita
             </button>
@@ -193,11 +271,19 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
         <div className="rounded-2xl border border-[#E2E6EA] bg-[#F8F9FA] p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className="h-12 w-12 rounded-full bg-[#111827] text-white font-extrabold text-sm flex items-center justify-center shrink-0">
-              SC
+              {getInitials(appointment.nombrePaciente)}
             </div>
             <div>
-              <span className="block text-[11px] font-bold text-[#8F99A3]">Nombre de la Paciente</span>
-              <h4 className="text-base font-extrabold text-[#1E242B]">{appointment.nombrePaciente}</h4>
+              <span className="block text-[11px] font-bold text-[#8F99A3]">Nombre del Paciente</span>
+              <button
+                type="button"
+                onClick={() => onNavigateToPatientProfile?.(appointment.idPaciente)}
+                className="text-base font-extrabold text-[#1E242B] hover:text-[#D4AF37] hover:underline cursor-pointer transition-colors text-left flex items-center gap-1.5 group"
+                title="Haga click para ver la información y ficha médica completa de este paciente"
+              >
+                <span>{appointment.nombrePaciente}</span>
+                <span className="text-xs text-[#D4AF37] font-bold group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform">↗</span>
+              </button>
             </div>
           </div>
 
@@ -218,7 +304,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
         </div>
       </div>
 
-      {/* Historias Clínicas (Imagen 2) */}
+      {/* Historias Clínicas Traídas de la Base de Datos (Imagen 2) */}
       <div className="rounded-3xl border border-[#E2E6EA] bg-white p-6 shadow-xs space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-[#E2E6EA]">
           <div className="flex items-center gap-3">
@@ -228,32 +314,53 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-extrabold text-[#1E242B]">Historias Clínicas</h3>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#FEF3C7] text-[#92400E]">
-                5 historias clínicas
+                {clinicalHistories.length} historia{clinicalHistories.length !== 1 ? 's clínicas' : ' clínica'}
               </span>
             </div>
           </div>
 
-          <button type="button" className="text-xs font-bold text-[#687380] hover:text-[#1E242B] flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => onNavigateToPatientProfile?.(appointment.idPaciente)}
+            className="text-xs font-bold text-[#687380] hover:text-[#1E242B] flex items-center gap-1 cursor-pointer"
+          >
             Ver antecedentes ⌃
           </button>
         </div>
 
-        <div className="divide-y divide-[#E2E6EA]">
-          {clinicalHistories.map((h, i) => (
-            <div key={i} className="py-3.5 flex items-center justify-between gap-4 text-xs">
-              <span className="font-bold text-[#1E242B]">{h.title}</span>
-              <div className="flex items-center gap-4 shrink-0">
-                <span className="text-[#687380] font-medium">{h.fecha}</span>
-                <button type="button" className="font-bold text-[#D4AF37] hover:text-[#B8942A]">
-                  Consultar →
-                </button>
+        {isLoadingHistories ? (
+          <div className="py-6 text-center text-xs text-[#8F99A3]">
+            Consultando historias clínicas desde la base de datos...
+          </div>
+        ) : clinicalHistories.length === 0 ? (
+          <div className="py-6 text-center rounded-2xl border border-dashed border-[#E2E6EA] text-xs text-[#8F99A3]">
+            No hay historias clínicas ni evoluciones previas registradas para este paciente en la base de datos.
+          </div>
+        ) : (
+          <div className="divide-y divide-[#E2E6EA]">
+            {clinicalHistories.map((h, i) => (
+              <div key={i} className="py-3.5 flex items-center justify-between gap-4 text-xs">
+                <div>
+                  <span className="font-bold text-[#1E242B]">{h.title}</span>
+                  {h.doctor && <span className="block text-[11px] text-[#687380] mt-0.5">{h.doctor}</span>}
+                </div>
+                <div className="flex items-center gap-4 shrink-0">
+                  <span className="text-[#687380] font-medium">{h.fecha}</span>
+                  <button
+                    type="button"
+                    onClick={() => onNavigateToPatientProfile?.(appointment.idPaciente)}
+                    className="font-bold text-[#D4AF37] hover:text-[#B8942A] cursor-pointer"
+                  >
+                    Consultar →
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Consentimientos Informados (Imagen 2) */}
+      {/* Consentimientos Informados Traídos de la Base de Datos (Imagen 2) */}
       <div className="rounded-3xl border border-[#E2E6EA] bg-white p-6 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-3 border-b border-[#E2E6EA]">
           <div className="flex items-center gap-3">
@@ -263,7 +370,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-extrabold text-[#1E242B]">Consentimientos Informados</h3>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#F3F4F6] text-[#4B5563]">
-                3 documentos pendientes
+                {consentItems.length} documento{consentItems.length !== 1 ? 's' : ''}
               </span>
             </div>
           </div>
@@ -272,7 +379,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
             <button
               type="button"
               onClick={() => setIsConsentModalOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-[#D4AF37] hover:bg-[#C29E2F] text-black text-xs font-bold flex items-center gap-1 transition-colors"
+              className="px-3 py-1.5 rounded-xl bg-[#D4AF37] hover:bg-[#C29E2F] text-black text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
             >
               <span>+</span> Adjuntar consentimiento
             </button>
@@ -280,39 +387,57 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
           </div>
         </div>
 
-        <div className="divide-y divide-[#E2E6EA]">
-          {consentItems.map((c) => (
-            <div key={c.id} className="py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
-              <div>
-                <h4 className="font-bold text-[#1E242B]">{c.title}</h4>
-                <div className="mt-1 flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#F3F4F6] text-[#687380] text-[11px] font-semibold">
-                    ⚪ Sin firmar
-                  </span>
+        {isLoadingConsents ? (
+          <div className="py-6 text-center text-xs text-[#8F99A3]">
+            Consultando consentimientos desde la base de datos...
+          </div>
+        ) : consentItems.length === 0 ? (
+          <div className="py-6 text-center rounded-2xl border border-dashed border-[#E2E6EA] text-xs text-[#8F99A3]">
+            No hay consentimientos informados registrados para este paciente en la base de datos.
+          </div>
+        ) : (
+          <div className="divide-y divide-[#E2E6EA]">
+            {consentItems.map((c, i) => (
+              <div
+                key={c.id_consentimiento || c.id || i}
+                className="py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+              >
+                <div>
+                  <h4 className="font-bold text-[#1E242B]">
+                    {c.nombre_plantilla || c.nombre_documento || c.title || 'Consentimiento Odontológico'}
+                  </h4>
+                  <div className="mt-1 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#F3F4F6] text-[#687380] text-[11px] font-semibold">
+                      ⚪ {c.firmado ? 'Firmado' : 'Sin firmar'}
+                    </span>
+                    {c.fecha_creacion && (
+                      <span className="text-[11px] text-[#8F99A3]">{String(c.fecha_creacion).split('T')[0]}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {!c.firmado && (
+                    <button
+                      type="button"
+                      onClick={() => onSignConsent?.(c.id_consentimiento || c.id)}
+                      className="px-3 py-1.5 rounded-xl border border-[#E2E6EA] text-[#1E242B] hover:bg-[#F3F4F6] font-bold text-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>✏</span> Firmar
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onNavigateToPatientProfile?.(appointment.idPaciente)}
+                    className="font-bold text-[#D4AF37] hover:text-[#B8942A] pl-2 cursor-pointer"
+                  >
+                    Consultar →
+                  </button>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded-xl border border-[#FCA5A5] text-[#DC2626] hover:bg-[#FEF2F2] font-bold text-xs"
-                >
-                  ✕ Quitar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onSignConsent?.(c.id)}
-                  className="px-3 py-1.5 rounded-xl border border-[#E2E6EA] text-[#1E242B] hover:bg-[#F3F4F6] font-bold text-xs flex items-center gap-1"
-                >
-                  <span>✏</span> Firmar
-                </button>
-                <button type="button" className="font-bold text-[#D4AF37] hover:text-[#B8942A] pl-2">
-                  Consultar →
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Modal 1: Cancelar Cita (Imagen 4) */}
@@ -332,7 +457,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
               <button
                 type="button"
                 onClick={() => setIsCancelModalOpen(false)}
-                className="text-[#8F99A3] hover:text-[#1E242B]"
+                className="text-[#8F99A3] hover:text-[#1E242B] cursor-pointer"
               >
                 ✕
               </button>
@@ -350,7 +475,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
               <div className="flex justify-between">
                 <span className="text-[#8F99A3]">Fecha y hora:</span>
                 <span className="font-bold text-[#D4AF37]">
-                  Sábado 24 Octubre 2026 • {appointment.horaInicio} - {appointment.horaFin} hrs
+                  {appointment.fecha} • {appointment.horaInicio} - {appointment.horaFin} hrs
                 </span>
               </div>
             </div>
@@ -367,7 +492,7 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
                     key={tag}
                     type="button"
                     onClick={() => setCancelReasonTag(tag)}
-                    className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all ${
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
                       cancelReasonTag === tag
                         ? 'border-[#D4AF37] bg-[#FFFBEB] text-[#92400E]'
                         : 'border-[#E2E6EA] bg-white text-[#687380] hover:bg-[#F3F4F6]'
@@ -391,14 +516,14 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
               <button
                 type="button"
                 onClick={() => setIsCancelModalOpen(false)}
-                className="px-4 py-2 rounded-xl border border-[#E2E6EA] text-xs font-bold text-[#687380] hover:bg-[#F3F4F6]"
+                className="px-4 py-2 rounded-xl border border-[#E2E6EA] text-xs font-bold text-[#687380] hover:bg-[#F3F4F6] cursor-pointer"
               >
                 Cancelar
               </button>
               <button
                 type="button"
                 onClick={handleConfirmCancel}
-                className="px-4 py-2 rounded-xl bg-[#DC2626] text-white text-xs font-extrabold hover:bg-[#B91C1C] flex items-center gap-1.5 shadow-xs"
+                className="px-4 py-2 rounded-xl bg-[#DC2626] text-white text-xs font-extrabold hover:bg-[#B91C1C] flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <span>✓</span> Confirmar cancelación
               </button>
@@ -418,78 +543,74 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
                 </div>
                 <div>
                   <h3 className="text-base font-extrabold text-[#1E242B]">Adjuntar Consentimientos Informados</h3>
-                  <p className="text-xs text-[#8F99A3]">Busca y selecciona uno o varios consentimientos para asociarlos a esta cita.</p>
+                  <p className="text-xs text-[#8F99A3]">Selecciona plantillas registradas en base de datos para asociarlas a esta cita.</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setIsConsentModalOpen(false)}
-                className="text-[#8F99A3] hover:text-[#1E242B]"
+                className="text-[#8F99A3] hover:text-[#1E242B] cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <input
-              type="text"
-              placeholder="Buscar consentimiento por nombre o categoría... (ej. Cirugía, Endodoncia, Anestesia)"
-              className="w-full rounded-2xl border border-[#E2E6EA] bg-[#F8F9FA] px-4 py-2.5 text-xs text-[#1E242B] focus:border-[#D4AF37] focus:bg-white focus:outline-none"
-            />
-
             <div className="flex items-center justify-between text-xs font-bold text-[#687380]">
-              <span>Disponibles:</span>
+              <span>Plantillas disponibles en el sistema:</span>
               <span className="px-2.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E]">
                 {selectedConsents.length} seleccionados
               </span>
             </div>
 
-            <div className="space-y-3 max-h-60 overflow-y-auto">
-              {consentItems.map((c) => {
-                const isSelected = selectedConsents.includes(c.id);
-                return (
-                  <div
-                    key={c.id}
-                    onClick={() => {
-                      setSelectedConsents((prev) =>
-                        isSelected ? prev.filter((id) => id !== c.id) : [...prev, c.id]
-                      );
-                    }}
-                    className={`rounded-2xl border p-4 cursor-pointer transition-all ${
-                      isSelected
-                        ? 'border-[#D4AF37] bg-[#FFFBEB]/40'
-                        : 'border-[#E2E6EA] bg-white hover:bg-[#F8F9FA]'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {}}
-                        className="mt-1 h-4 w-4 rounded accent-[#D4AF37]"
-                      />
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-extrabold text-[#1E242B]">{c.title}</h4>
-                          <span className="text-[10px] text-[#8F99A3]">Versión 2026</span>
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px]">
-                          <span className="px-2 py-0.5 rounded bg-[#FEF3C7] text-[#92400E] font-bold">
-                            {c.category}
-                          </span>
-                          <span className="text-[#687380]">{c.tag}</span>
+            {availableTemplates.length === 0 ? (
+              <p className="py-6 text-center text-xs text-[#8F99A3]">
+                No hay plantillas de consentimientos configuradas en el sistema.
+              </p>
+            ) : (
+              <div className="space-y-3 max-h-60 overflow-y-auto">
+                {availableTemplates.map((t) => {
+                  const id = t.id_plantilla || t.id;
+                  const isSelected = selectedConsents.includes(id);
+                  return (
+                    <div
+                      key={id}
+                      onClick={() => {
+                        setSelectedConsents((prev) =>
+                          isSelected ? prev.filter((item) => item !== id) : [...prev, id]
+                        );
+                      }}
+                      className={`rounded-2xl border p-4 cursor-pointer transition-all ${
+                        isSelected
+                          ? 'border-[#D4AF37] bg-[#FFFBEB]/40'
+                          : 'border-[#E2E6EA] bg-white hover:bg-[#F8F9FA]'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {}}
+                          className="mt-1 h-4 w-4 rounded accent-[#D4AF37]"
+                        />
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-extrabold text-[#1E242B]">{t.titulo || t.nombre}</h4>
+                            <span className="text-[10px] text-[#8F99A3]">Activo</span>
+                          </div>
+                          <p className="text-[11px] text-[#687380] line-clamp-1">{t.descripcion || 'Plantilla oficial OdontoLeal'}</p>
                         </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E2E6EA]">
               <button
                 type="button"
                 onClick={() => setIsConsentModalOpen(false)}
-                className="px-4 py-2 rounded-xl border border-[#E2E6EA] text-xs font-bold text-[#687380] hover:bg-[#F3F4F6]"
+                className="px-4 py-2 rounded-xl border border-[#E2E6EA] text-xs font-bold text-[#687380] hover:bg-[#F3F4F6] cursor-pointer"
               >
                 Cancelar
               </button>
@@ -498,12 +619,12 @@ export const AppointmentDetailPage: React.FC<AppointmentDetailPageProps> = ({
                 onClick={() => {
                   showAlert({
                     title: 'Consentimientos Asociados',
-                    message: `Se han vinculado ${selectedConsents.length} consentimientos a la cita médica con éxito.`,
+                    message: `Se han seleccionado ${selectedConsents.length} plantillas para asociar a la atención médica.`,
                     type: 'success',
                   });
                   setIsConsentModalOpen(false);
                 }}
-                className="px-4 py-2 rounded-xl bg-[#D4AF37] text-black text-xs font-extrabold hover:bg-[#C29E2F] flex items-center gap-1.5 shadow-xs"
+                className="px-4 py-2 rounded-xl bg-[#D4AF37] text-black text-xs font-extrabold hover:bg-[#C29E2F] flex items-center gap-1.5 shadow-xs cursor-pointer"
               >
                 <span>✓</span> Adjuntar seleccionados ({selectedConsents.length})
               </button>

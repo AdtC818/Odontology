@@ -1,7 +1,6 @@
 // src/modules/appointments/ui/views/AppointmentRequestDetailPage.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '../../../../shared/ui/components/Button';
-import { Badge } from '../../../../shared/ui/components/Badge';
 import { useAlertModal } from '../../../../shared/ui/hooks/useAlertModal';
 
 export interface RequestDetailData {
@@ -31,9 +30,25 @@ export interface AppointmentRequestDetailPageProps {
   request: RequestDetailData;
   doctors?: RequestReviewDoctorOption[];
   onBack: () => void;
-  onApprove: (idSolicitud: number, idDoctor?: number, motivo?: string) => Promise<void> | void;
+  onApprove: (
+    idSolicitud: number,
+    idDoctor?: number,
+    motivo?: string,
+    selectedBlocks?: string[]
+  ) => Promise<void> | void;
   onReject: (idSolicitud: number, motivo: string) => Promise<void> | void;
   isLoading?: boolean;
+}
+
+interface DaySlotItem {
+  inicio: string;
+  final: string;
+  timeStart: string;
+  timeEnd: string;
+  label: string;
+  isRequested: boolean;
+  isOccupied: boolean;
+  doctorOccupant?: string;
 }
 
 export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPageProps> = ({
@@ -51,7 +66,13 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
     return 101; // Dr. Mateo Gómez
   });
   const [tituloCita, setTituloCita] = useState(request.motivoConsulta || 'Valoración Odontológica');
+  const [isProcessing, setIsProcessing] = useState(false);
   const { showAlert, AlertModalComponent } = useAlertModal();
+
+  // Estados para selección de bloques de horario continuos (Imagen 1)
+  const [daySlots, setDaySlots] = useState<DaySlotItem[]>([]);
+  const [selectedBlockStarts, setSelectedBlockStarts] = useState<string[]>([]);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
 
   // Formateo de fecha en español (ej. Jueves 29 de Octubre de 2026)
   const formatSpanishDate = (dateStr: string) => {
@@ -70,6 +91,140 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
       return dateStr;
     }
   };
+
+  // Cargar bloques de la base de datos para la fecha solicitada
+  useEffect(() => {
+    if (!request.fechaSolicitada) return;
+    const cleanFecha = request.fechaSolicitada.includes('T')
+      ? request.fechaSolicitada.split('T')[0]
+      : request.fechaSolicitada.split(' ')[0];
+
+    setIsLoadingSlots(true);
+    Promise.all([
+      fetch(`/api/v1/appointments/slots?desde=${cleanFecha} 00:00:00&hasta=${cleanFecha} 23:59:59`).then(
+        (r) => (r.ok ? r.json() : { data: [] })
+      ),
+      fetch(`/api/v1/appointments/agenda?fecha=${cleanFecha}`).then((r) =>
+        r.ok ? r.json() : { data: [] }
+      ),
+    ])
+      .then(([slotsRes, agendaRes]) => {
+        const rawSlots: any[] = slotsRes.data || [];
+        const agenda: any[] = agendaRes.data || [];
+
+        // Mapear doctores u ocupantes por bloque
+        const occupantMap = new Map<string, string>();
+        for (const appt of agenda) {
+          if (Array.isArray(appt.bloques) && appt.estado !== 'Rechazada') {
+            for (const b of appt.bloques) {
+              const cleanB = String(b).replace('T', ' ').slice(0, 19);
+              occupantMap.set(cleanB, appt.nombreProfesional || 'Dr. Gómez');
+            }
+          }
+        }
+
+        let reqHour = request.horaSolicitada.trim();
+        if (reqHour.includes(':') && reqHour.split(':')[0].length === 1) {
+          reqHour = '0' + reqHour;
+        }
+
+        const formatted: DaySlotItem[] = rawSlots.map((s: any) => {
+          const cleanInicio = String(s.inicio || '').replace('T', ' ').slice(0, 19);
+          const cleanFinal = String(s.final || '').replace('T', ' ').slice(0, 19);
+          const timeStart = cleanInicio.split(' ')[1]?.slice(0, 5) || '00:00';
+          const timeEnd = cleanFinal.split(' ')[1]?.slice(0, 5) || '00:00';
+          const isRequested = timeStart === reqHour || cleanInicio.includes(reqHour);
+          const occupant = occupantMap.get(cleanInicio);
+          const isOccupied = s.ocupacion === true && !isRequested;
+
+          return {
+            inicio: cleanInicio,
+            final: cleanFinal,
+            timeStart,
+            timeEnd,
+            label: `${timeStart} – ${timeEnd}`,
+            isRequested,
+            isOccupied,
+            doctorOccupant: occupant,
+          };
+        });
+
+        setDaySlots(formatted);
+
+        // Inicializar con el bloque solicitado por el paciente
+        const requestedSlot = formatted.find((s) => s.isRequested);
+        if (requestedSlot) {
+          setSelectedBlockStarts([requestedSlot.inicio]);
+        } else if (formatted.length > 0) {
+          const firstAvailable = formatted.find((s) => !s.isOccupied);
+          if (firstAvailable) {
+            setSelectedBlockStarts([firstAvailable.inicio]);
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('Error cargando bloques para el detalle de la solicitud:', err);
+      })
+      .finally(() => {
+        setIsLoadingSlots(false);
+      });
+  }, [request.fechaSolicitada, request.horaSolicitada]);
+
+  // Selección de bloques continuos (1 bloque = 30 min)
+  const handleToggleBlock = (slot: DaySlotItem) => {
+    if (slot.isOccupied) return;
+
+    setSelectedBlockStarts((prev) => {
+      if (prev.includes(slot.inicio)) {
+        if (prev.length === 1) return prev; // Mantener al menos 1 seleccionado
+        return prev.filter((b) => b !== slot.inicio).sort();
+      }
+
+      if (prev.length === 0) return [slot.inicio];
+
+      const sorted = [...prev].sort();
+      const firstStart = sorted[0];
+      const lastStart = sorted[sorted.length - 1];
+
+      const slotIndex = daySlots.findIndex((s) => s.inicio === slot.inicio);
+      const firstIndex = daySlots.findIndex((s) => s.inicio === firstStart);
+      const lastIndex = daySlots.findIndex((s) => s.inicio === lastStart);
+
+      // Si es contiguo al final o al inicio
+      if (slotIndex === lastIndex + 1 || slotIndex === firstIndex - 1) {
+        return [...prev, slot.inicio].sort();
+      }
+
+      // Si no es contiguo, iniciar una nueva selección contigua a partir de este bloque
+      return [slot.inicio];
+    });
+  };
+
+  // Cálculo dinámico del banner de resumen (Imagen 1)
+  const sortedSelected = [...selectedBlockStarts].sort();
+  const selectedCount = sortedSelected.length;
+  const firstSelectedSlot = daySlots.find((s) => s.inicio === sortedSelected[0]);
+  const lastSelectedSlot = daySlots.find((s) => s.inicio === sortedSelected[sortedSelected.length - 1]);
+
+  const startHourDisplay = firstSelectedSlot?.timeStart || request.horaSolicitada || '09:00';
+  const endHourDisplay = lastSelectedSlot?.timeEnd || '09:30';
+
+  const totalMinutes = selectedCount * 30;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  let durationLabel = '';
+  if (hours > 0 && minutes > 0) {
+    durationLabel = `${hours} hora${hours > 1 ? 's' : ''} ${minutes} min total`;
+  } else if (hours > 0) {
+    durationLabel = `${hours} hora${hours > 1 ? 's' : ''} total`;
+  } else {
+    durationLabel = `${minutes} min total`;
+  }
+
+  const continuousCountLabel =
+    selectedCount > 1
+      ? `${selectedCount} bloques continuos seleccionados`
+      : '1 bloque seleccionado';
 
   // Cálculo de iniciales
   const getInitials = (name: string) => {
@@ -100,16 +255,65 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
     setIsRejectModalOpen(false);
   };
 
+  // Manejador de confirmación con elemento de carga explícito
+  const handleApproveClick = async () => {
+    if (selectedBlockStarts.length === 0) {
+      showAlert({
+        title: 'Horario Requerido',
+        message: 'Debe seleccionar al menos un bloque de horario para agendar la cita.',
+        type: 'warning',
+      });
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      await onApprove(request.idSolicitud, selectedDoctorId, tituloCita, selectedBlockStarts);
+    } catch (err: any) {
+      showAlert({
+        title: 'Error al confirmar cita',
+        message: err.message || 'No fue posible confirmar la solicitud.',
+        type: 'error',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
-    <div className="space-y-6 max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 animate-fadeIn">
+    <div className="space-y-6 max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 animate-fadeIn relative">
       <AlertModalComponent />
+
+      {/* Modal / Overlay de Procesamiento de Solicitud */}
+      {isProcessing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-fadeIn">
+          <div className="w-full max-w-sm rounded-3xl border border-[#E2E6EA] bg-white p-8 shadow-2xl text-center space-y-4">
+            <div className="h-16 w-16 rounded-full bg-[#FEF9E7] border-2 border-[#D4AF37] flex items-center justify-center mx-auto">
+              <svg className="w-8 h-8 text-[#D4AF37] animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-extrabold text-[#1E242B]">Confirmando Cita Médica</h3>
+              <p className="text-xs text-[#687380] leading-relaxed">
+                Estamos registrando la cita en la base de datos, ocupando los bloques seleccionados y enviando las confirmaciones por correo electrónico al paciente y al doctor...
+              </p>
+            </div>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#F3F4F6] text-[11px] font-semibold text-[#8F99A3]">
+              <span className="h-2 w-2 rounded-full bg-[#D4AF37] animate-pulse"></span>
+              Por favor espere un momento
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Botón Superior: Volver */}
       <div>
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 text-xs font-bold text-[#687380] hover:text-[#1E242B] transition-colors"
+          disabled={isProcessing}
+          className="inline-flex items-center gap-2 text-xs font-bold text-[#687380] hover:text-[#1E242B] transition-colors cursor-pointer disabled:opacity-50"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -147,8 +351,8 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
           <button
             type="button"
             onClick={() => setIsRejectModalOpen(true)}
-            disabled={isLoading}
-            className="px-4 py-2.5 rounded-xl border border-[#FCA5A5] text-[#DC2626] bg-white hover:bg-[#FEF2F2] text-xs font-bold transition-colors inline-flex items-center gap-1.5 shadow-2xs"
+            disabled={isLoading || isProcessing}
+            className="px-4 py-2.5 rounded-xl border border-[#FCA5A5] text-[#DC2626] bg-white hover:bg-[#FEF2F2] text-xs font-bold transition-colors inline-flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
@@ -158,27 +362,39 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
 
           <button
             type="button"
-            onClick={() => onApprove(request.idSolicitud, selectedDoctorId, tituloCita)}
-            disabled={isLoading}
-            className="px-5 py-2.5 rounded-xl bg-[#D4AF37] hover:bg-[#C29E2F] text-black text-xs font-extrabold transition-all shadow-xs inline-flex items-center gap-2 cursor-pointer"
+            onClick={handleApproveClick}
+            disabled={isLoading || isProcessing || selectedBlockStarts.length === 0}
+            className="px-5 py-2.5 rounded-xl bg-[#D4AF37] hover:bg-[#C29E2F] text-black text-xs font-extrabold transition-all shadow-xs inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
           >
-            <svg className="w-4 h-4 stroke-[2.5]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-            </svg>
-            Crear cita
+            {isProcessing ? (
+              <>
+                <svg className="w-4 h-4 animate-spin text-black" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Creando cita...</span>
+              </>
+            ) : (
+              <>
+                <svg className="w-4 h-4 stroke-[2.5]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <span>Crear cita</span>
+              </>
+            )}
           </button>
         </div>
       </div>
 
       {/* Grid de 2 Columnas Principal */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Columna Izquierda (7 cols): Horario, Motivo y Callout de Impacto */}
-        <div className="lg:col-span-7 space-y-6">
-          {/* Card 1: Fecha y Horario Solicitado */}
+        {/* Columna Izquierda (6 cols): Información Solicitada, Motivo y Asignación de Profesional */}
+        <div className="lg:col-span-6 space-y-6">
+          {/* Card 1: Fecha y Horario Solicitado Originalmente */}
           <div className="rounded-3xl border border-[#E2E6EA] bg-white p-6 shadow-xs space-y-4">
             <div className="flex items-center gap-2 text-sm font-extrabold text-[#1E242B]">
               <span className="text-[#D4AF37]">🕒</span>
-              <h3>Fecha y Horario Solicitado</h3>
+              <h3>Fecha y Horario Solicitado por el Paciente</h3>
             </div>
 
             <div className="rounded-2xl border border-[#E2E6EA] bg-[#F8F9FA] p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -250,23 +466,18 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
                   {doctors.length > 0 ? (
                     doctors.map((d) => (
                       <option key={d.idUsuario} value={d.idUsuario}>
-                        {d.nombreCompleto} {d.especialidad ? `(${d.especialidad})` : ''}
+                        {d.nombreCompleto} ({d.especialidad || 'Odontología General'})
                       </option>
                     ))
                   ) : (
-                    <>
-                      <option value={101}>Dr. Mateo Gómez (Odontología General)</option>
-                      <option value={102}>Dra. Valeria Silva (Ortodoncia)</option>
-                      <option value={1}>Dr. Eduar Leal Álvarez (Especialista)</option>
-                      <option value={103}>Dr. Alejandro Ruiz (Cirugía Oral)</option>
-                    </>
+                    <option value={101}>Dr. Mateo Gómez (Odontología General)</option>
                   )}
                 </select>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-[#687380] mb-1.5">
-                  Procedimiento / Título de la Cita:
+                  Título / Tratamiento de la Cita:
                 </label>
                 <input
                   type="text"
@@ -288,15 +499,15 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
                 Impacto de la confirmación
               </h4>
               <p className="text-xs text-[#78350F] leading-relaxed">
-                Al hacer click en <strong>Crear cita</strong>, se confirmará formalmente la cita en la agenda del doctor seleccionado, el bloque quedará reservado y se enviará de inmediato el correo de confirmación al <strong>paciente</strong> y la notificación al <strong>doctor</strong>.
+                Al hacer click en <strong>Crear cita</strong>, se confirmará formalmente la cita en la agenda del doctor seleccionado, todos los bloques seleccionados ({startHourDisplay} a {endHourDisplay}) quedarán ocupados en la base de datos y se enviará de inmediato el correo de confirmación al <strong>paciente</strong> y la notificación al <strong>doctor</strong>.
               </p>
             </div>
           </div>
         </div>
 
-        {/* Columna Derecha (5 cols): Datos del Paciente y Alta Automática */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* Card: Datos del Paciente */}
+        {/* Columna Derecha (6 cols): Datos del Paciente arriba y Bloques Horarios Disponibles abajo */}
+        <div className="lg:col-span-6 space-y-6">
+          {/* Card 1: Datos del Paciente */}
           <div className="rounded-3xl border border-[#E2E6EA] bg-white p-6 shadow-xs space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-[#E2E6EA]">
               <div className="flex items-center gap-2 text-sm font-extrabold text-[#1E242B]">
@@ -362,17 +573,146 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
             </div>
           </div>
 
-          {/* Card: Alta Automática */}
-          <div className="rounded-2xl border border-[#BFDBFE] bg-[#EFF6FF] p-5 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-extrabold uppercase text-[#1D4ED8] tracking-wider">
-              <svg className="w-4 h-4 text-[#2563EB]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
-              </svg>
-              <span>Alta Automática</span>
+          {/* Card 2: Bloques Horarios Disponibles (Ubicado abajo a la derecha, debajo de datos del paciente, Imagen 1) */}
+          <div className="rounded-3xl border border-[#E2E6EA] bg-white p-6 shadow-xs space-y-4">
+            <div>
+              <h3 className="text-base font-extrabold text-[#1E242B]">Bloques Horarios Disponibles</h3>
+              <p className="text-xs text-[#687380] mt-0.5">
+                Selecciona bloques continuos (1 bloque = 30 minutos)
+              </p>
             </div>
-            <p className="text-xs text-[#1E3A8A] leading-relaxed">
-              Al ser <strong>paciente nueva</strong>, al aceptar y confirmar la cita se creará automáticamente el registro del paciente en el sistema con los datos ingresados en la solicitud y cita.
-            </p>
+
+            {/* Banner de Resumen de Selección (Dorado, Imagen 1) */}
+            <div className="rounded-2xl border border-[#D4AF37] bg-[#FEF9E7] p-4 flex items-center justify-between gap-3 shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-[#D4AF37] text-white flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-sm font-extrabold text-[#1E242B]">
+                    {startHourDisplay} – {endHourDisplay} hrs ({durationLabel})
+                  </h4>
+                  <p className="text-xs text-[#687380] font-medium mt-0.5">
+                    {continuousCountLabel}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 text-xs font-bold text-[#059669] shrink-0">
+                <span>✓</span>
+                <span>Válido</span>
+              </div>
+            </div>
+
+            {/* Listado de Bloques de Horario con Scroll Interno */}
+            {isLoadingSlots ? (
+              <div className="p-8 text-center text-xs text-[#8F99A3]">
+                Cargando bloques de horario desde la base de datos...
+              </div>
+            ) : daySlots.length === 0 ? (
+              <div className="p-8 text-center rounded-2xl border border-dashed border-[#E2E6EA] text-xs text-[#8F99A3]">
+                No hay bloques de horario generados para este día. Cree los bloques desde la agenda médica.
+              </div>
+            ) : (
+              <div className="max-h-72 overflow-y-auto pr-1 space-y-2">
+                {daySlots.map((slot) => {
+                  const isSelected = selectedBlockStarts.includes(slot.inicio);
+                  const selectedIdx = sortedSelected.indexOf(slot.inicio);
+
+                  if (isSelected) {
+                    return (
+                      <div
+                        key={slot.inicio}
+                        onClick={() => handleToggleBlock(slot)}
+                        className="rounded-2xl border-2 border-[#D4AF37] bg-[#FEFDF5] p-3.5 flex items-center justify-between cursor-pointer transition-all shadow-xs"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="h-3 w-3 rounded-full bg-[#D4AF37]"></span>
+                          <span className="text-sm font-extrabold text-[#1E242B]">{slot.label}</span>
+                        </div>
+                        <span className="text-xs font-bold text-[#1E242B]">
+                          Bloque {selectedIdx + 1} Seleccionado
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  if (slot.isRequested) {
+                    return (
+                      <div
+                        key={slot.inicio}
+                        onClick={() => handleToggleBlock(slot)}
+                        className="rounded-2xl border-2 border-[#7DD3FC] bg-white p-3.5 flex items-center justify-between cursor-pointer transition-all hover:bg-[#F0F9FF]"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="h-3 w-3 rounded-full bg-[#0284C7]"></span>
+                          <span className="text-sm font-extrabold text-[#1E242B]">{slot.label}</span>
+                        </div>
+                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#0284C7] text-white shadow-2xs">
+                          Solicitado (Pendiente)
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  if (slot.isOccupied) {
+                    return (
+                      <div
+                        key={slot.inicio}
+                        className="rounded-2xl border border-[#E2E6EA] bg-[#F8F9FA] p-3.5 flex items-center justify-between opacity-60 cursor-not-allowed"
+                      >
+                        <div className="flex items-center gap-3 text-[#9CA3AF]">
+                          <span className="h-3 w-3 rounded-full bg-[#CBD2D9]"></span>
+                          <span className="text-sm font-semibold line-through">{slot.label}</span>
+                        </div>
+                        <span className="text-xs font-semibold text-[#8F99A3]">
+                          Ocupado {slot.doctorOccupant ? `(${slot.doctorOccupant})` : ''}
+                        </span>
+                      </div>
+                    );
+                  }
+
+                  // Disponible
+                  return (
+                    <div
+                      key={slot.inicio}
+                      onClick={() => handleToggleBlock(slot)}
+                      className="rounded-2xl border border-[#E2E6EA] bg-white p-3.5 flex items-center justify-between cursor-pointer hover:border-[#CBD2D9] hover:bg-[#F8F9FA] transition-all"
+                    >
+                      <div className="flex items-center gap-3 text-[#1E242B]">
+                        <span className="h-3 w-3 rounded-full border-2 border-[#CBD2D9]"></span>
+                        <span className="text-sm font-bold">{slot.label}</span>
+                      </div>
+                      <span className="text-xs font-medium text-[#687380]">
+                        Disponible
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Leyenda de Estados de Bloques (Imagen 1) */}
+            <div className="flex flex-wrap items-center gap-4 pt-2 text-xs text-[#687380] border-t border-[#E2E6EA]">
+              <div className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-full bg-[#D4AF37]"></span>
+                <span>Seleccionado</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-full bg-[#0284C7]"></span>
+                <span>Solicitado</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-full border-2 border-[#CBD2D9]"></span>
+                <span>Disponible</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="h-3 w-3 rounded-full bg-[#CBD2D9]"></span>
+                <span>Ocupado</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -388,7 +728,7 @@ export const AppointmentRequestDetailPage: React.FC<AppointmentRequestDetailPage
               <button
                 type="button"
                 onClick={() => setIsRejectModalOpen(false)}
-                className="text-[#8F99A3] hover:text-[#1E242B] text-sm"
+                className="text-[#8F99A3] hover:text-[#1E242B] text-sm cursor-pointer"
               >
                 ✕
               </button>
