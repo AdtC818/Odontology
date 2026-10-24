@@ -31,77 +31,15 @@ export class AppointmentRepository {
     }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const { rows } = await db.query<TimeSlotRow>(
-      `SELECT inicio::text as inicio, final::text as final, estado, ocupacion FROM public.bloques_horario ${where} ORDER BY inicio ASC;`,
+      `SELECT inicio, final, estado, ocupacion FROM public.bloques_horario ${where} ORDER BY inicio ASC;`,
       params
     );
-
-    // Si se consulta un día en específico (desde y hasta corresponden a la misma fecha),
-    // completamos con los bloques estándar de la jornada clínica para que el portal público
-    // y la agenda siempre visualicen los bloques con su estado real de disponibilidad
-    if (desde && hasta && desde.slice(0, 10) === hasta.slice(0, 10)) {
-      const dateStr = desde.slice(0, 10);
-      const DEFAULT_HOURS = [
-        '08:00:00', '08:30:00', '09:00:00', '09:30:00',
-        '10:00:00', '10:30:00', '11:00:00', '11:30:00',
-        '14:00:00', '14:30:00', '15:00:00', '15:30:00',
-        '16:00:00', '16:30:00',
-      ];
-      const rowsMap = new Map<string, TimeSlotRow>();
-      for (const r of rows) {
-        const timePart = r.inicio.split(' ')[1];
-        if (timePart) rowsMap.set(timePart, r);
-      }
-
-      return DEFAULT_HOURS.map((hour) => {
-        const existing = rowsMap.get(hour);
-        if (existing) return existing;
-
-        const [h, m] = hour.split(':').map(Number);
-        const nextMin = (m + 30) % 60;
-        const nextHour = m + 30 >= 60 ? h + 1 : h;
-        const endHourStr = `${String(nextHour).padStart(2, '0')}:${String(nextMin).padStart(2, '0')}:00`;
-
-        return {
-          inicio: `${dateStr} ${hour}`,
-          final: `${dateStr} ${endHourStr}`,
-          estado: true,
-          ocupacion: false,
-        };
-      });
-    }
-
     return rows;
   }
 
   // RF-AGE-003: Solicitar cita desde sección pública y reservar bloque (Regla de Negocio 1)
   async createPublicRequest(dto: CreateSolicitudCitaDTO) {
     return db.withTransaction(async (client) => {
-      // Validar Autorización de Datos (RQNF-SEG-005, RF-AGE-003)
-      if (dto.autorizacionDatos === false) {
-        throw new Error('Debe aceptar la autorización de tratamiento de datos personales para continuar (RQNF-SEG-005).');
-      }
-
-      // Validar Regla de Negocio 2: Ventana de solicitud de 5 a 60 días calendario
-      const now = new Date();
-      const requestedDate = new Date(dto.bloqueSolicitado.replace(' ', 'T'));
-      const diffMs = requestedDate.getTime() - now.getTime();
-      const diffDays = diffMs / (1000 * 60 * 60 * 24);
-      if (diffDays < 4.8 || diffDays > 60.2) {
-        throw new Error('Solo se aceptan solicitudes de citas para fechas entre 5 y 60 días calendario a partir de hoy (Regla de Negocio 2).');
-      }
-
-      // Validar RF-AGE-003: Un documento no puede tener más de una cita Solicitada en trámite
-      const pendingSolRes = await client.query(
-        `SELECT id_solicitud FROM public.solicitud_cita 
-         WHERE documento_solicitante = $1 AND estado = TRUE;`,
-        [dto.documentoSolicitante.trim()]
-      );
-      if (pendingSolRes.rows.length > 0) {
-        throw new Error(
-          `El documento ${dto.documentoSolicitante.trim()} ya tiene una cita Solicitada en proceso de aprobación (RF-AGE-003). Por favor espere su confirmación o comuníquese con el consultorio si necesita modificarla.`
-        );
-      }
-
       // 1. Asegurar que el bloque horario existe en la base de datos
       const startDate = new Date(dto.bloqueSolicitado);
       const endDate = new Date(startDate.getTime() + 30 * 60 * 1000);
@@ -116,11 +54,11 @@ export class AppointmentRepository {
       );
 
       const slotRes = await client.query<TimeSlotRow>(
-        `SELECT inicio::text as inicio, final::text as final, estado, ocupacion FROM public.bloques_horario WHERE inicio = $1 FOR UPDATE;`,
+        `SELECT inicio, estado, ocupacion FROM public.bloques_horario WHERE inicio = $1 FOR UPDATE;`,
         [startStr]
       );
       if (slotRes.rows.length === 0 || !slotRes.rows[0].estado || slotRes.rows[0].ocupacion) {
-        throw new Error(`El horario seleccionado ya no se encuentra disponible o fue reservado por otro paciente. Por favor seleccione otro horario disponible.`);
+        throw new Error('El horario seleccionado no se encuentra disponible o ya está ocupado.');
       }
 
       // 2. Regla de Negocio: Si el documento ya existe en la BD, no volver a crear el paciente, usar el existente

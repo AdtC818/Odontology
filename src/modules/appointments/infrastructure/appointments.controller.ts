@@ -42,20 +42,11 @@ export class AppointmentsController {
         bloqueSolicitado,
         descripcion,
         idProfesional,
-        servicio,
-        autorizacionDatos,
       } = req.body;
 
       if (!nombreSolicitante || !documentoSolicitante || !correoSolicitante || !bloqueSolicitado) {
         res.status(400).json({
-          message: 'Nombre, documento, correo y horario son campos obligatorios para la solicitud (RF-AGE-003).',
-        });
-        return;
-      }
-
-      if (autorizacionDatos === false || autorizacionDatos === undefined) {
-        res.status(400).json({
-          message: 'Debe aceptar la autorización de tratamiento de datos personales conforme a la ley colombiana (RQNF-SEG-005).',
+          message: 'Nombre, documento, correo y horario son campos obligatorios para la solicitud.',
         });
         return;
       }
@@ -69,8 +60,6 @@ export class AppointmentsController {
         bloqueSolicitado,
         descripcion,
         idProfesional,
-        servicio: servicio || 'Odontología general',
-        autorizacionDatos: Boolean(autorizacionDatos),
       });
 
       // Envío de correo de confirmación de solicitud recibida (RF-AGE-003, RQNF-FIA-004)
@@ -78,13 +67,12 @@ export class AppointmentsController {
         const parts = String(bloqueSolicitado).split(' ');
         const fecha = parts[0] || bloqueSolicitado;
         const hora = (parts[1] || '').slice(0, 5) || 'Por confirmar';
-        const doctorName = idProfesional === 2 || servicio === 'Ortodoncia' ? 'Dra. Natalia Díaz' : 'Dr. Eduar Leal Álvarez';
         await this.mailerService.sendPublicRequestReceivedEmail({
           to: correoSolicitante.trim(),
           nombreSolicitante: nombreSolicitante.trim(),
           fecha,
           hora,
-          doctor: doctorName,
+          doctor: 'Dr. Eduar Leal Álvarez',
           motivo: descripcion || 'Valoración odontológica solicitada',
           idSolicitud: (result as any).solicitud?.id_solicitud,
         });
@@ -93,18 +81,11 @@ export class AppointmentsController {
       }
 
       res.status(201).json({
-        message: 'Solicitud registrada y sujeta a aprobación del consultorio. Para cambiar o cancelar comuníquese al consultorio.',
+        message: 'Solicitud registrada y sujeta a aprobación del consultorio.',
         data: result,
       });
     } catch (error: any) {
-      const isConflict =
-        error.message?.includes('no se encuentra disponible') ||
-        error.message?.includes('ya está ocupado') ||
-        error.message?.includes('ya tiene una cita Solicitada');
-      res.status(isConflict ? 409 : 400).json({
-        message: error.message,
-        code: isConflict ? 'CONFLICT' : 'BAD_REQUEST',
-      });
+      res.status(400).json({ message: error.message });
     }
   };
 

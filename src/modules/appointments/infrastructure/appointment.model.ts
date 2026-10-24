@@ -23,8 +23,6 @@ export interface CreateSolicitudCitaDTO {
   bloqueSolicitado: string; 
   descripcion?: string;
   idProfesional?: number;
-  servicio?: string;
-  autorizacionDatos?: boolean;
 }
 
 export interface CreateCitaDTO {
